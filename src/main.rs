@@ -17,6 +17,7 @@ use tokio::net::TcpListener;
 use url::Url;
 
 const REDIRECT_URI: &str = "http://localhost:8383";
+const TAKEOUT_FOLDER_ID: &str = "1M2IDkPkChp8nBisf18-p_2-ZhG-nFSIhk68Acy8GQIlEIlrCb6XAGDc0Ty30MEoQDr-JHu1m";
 
 #[derive(Serialize, Deserialize, Debug)]
 struct Tokens {
@@ -43,7 +44,6 @@ enum Commands {
     List {
         google_drive_folder: Option<String>,
     },
-    Login {},
 }
 
 #[tokio::main]
@@ -55,32 +55,19 @@ async fn main() {
     .await
     .unwrap();
 
-    if let Ok(files) = list_google_drive(None).await {
-        for file in files {
-            println!("{:?}", file);
+    let cli = Cli::parse();
+
+    match cli.command {
+        Commands::Takeout {
+            google_drive_folder,
+            output_folder,
+        } => {}
+        Commands::List { google_drive_folder } => {
+            list_google_drive(None)
+                .await
+                .expect("Failed to list Google Drive files");
         }
     }
-
-    // let cli = Cli::parse();
-    //
-    // match cli.command {
-    //     Commands::Takeout { google_drive_folder, output_folder } => {
-    //
-    //     }
-    //     Commands::List { .. } => {
-    //
-    //     }
-    //     Commands::Login { .. } => {
-    //         match login_google() {
-    //             Ok(_) => {
-    //                 println!("Successfully logged in");
-    //             }
-    //             Err(_) => {
-    //                 eprintln!("Failed to login");
-    //             }
-    //         };
-    //     }
-    // }
 }
 /*
 {"state"=>"f19ea489-ea80-460a-905e-f4259227cc13", "code"=>"4/0AanRRrsbNdQnzqNqBYiluRBGkY6OiIbutw1goIG7VgS23ypELRuvS_ztJCNvaGLx1R3gBA", "scope"=>"https://www.googleapis.com/auth/drive", "controller"=>"supervisor/crm_integration", "action"=>"drive"}
@@ -164,7 +151,7 @@ async fn login_google() -> Result<Tokens> {
                 message
             );
             stream.write_all(response.as_bytes()).await?;
-            
+
             break;
         }
     }
@@ -233,16 +220,25 @@ async fn get_drive_client() -> Result<Client> {
     ))
 }
 
-async fn list_google_drive(folder: Option<String>) -> Result<Vec<File>> {
-    let google_drive = get_drive_client().await.expect("Failed to get Google Drive client");
+const FOLDER_QUERY: &str = "mimeType = 'application/vnd.google-apps.folder'";
+
+async fn list_google_drive(folder: Option<String>) -> Result<()> {
+    let google_drive = get_drive_client()
+        .await
+        .expect("Failed to get Google Drive client");
     let file_client = google_drive.files();
     let files = file_client
-        .list(
-            "user", "", false, "", false, "name", 100, "", "", "", false, false, "",
-        )
+        .list_all(
+            "user", "", false, "",
+            false, "name", format!("'{}' in parents", TAKEOUT_FOLDER_ID).as_str(),
+            "",true,false,"")
         .await
         .expect("Failed to list files");
-    Ok(files.body)
+
+    for file in files.body {
+        println!("{}, {}", file.name, file.id);
+    }
+    Ok(())
 }
 
 fn get_token_file_path() -> PathBuf {
