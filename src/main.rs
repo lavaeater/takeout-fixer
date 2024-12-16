@@ -12,6 +12,7 @@ use oauth2::{
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::path::PathBuf;
+use google_drive::traits::FileOps;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 use url::Url;
@@ -44,6 +45,9 @@ enum Commands {
     List {
         google_drive_folder: Option<String>,
     },
+    DownloadFile {
+        file_id: String
+    }
 }
 
 #[tokio::main]
@@ -66,6 +70,9 @@ async fn main() {
             list_google_drive(None)
                 .await
                 .expect("Failed to list Google Drive files");
+        }
+        Commands::DownloadFile { file_id } => {
+            download_file(file_id).await.expect("Failed to download file");
         }
     }
 }
@@ -238,6 +245,21 @@ async fn list_google_drive(folder: Option<String>) -> Result<()> {
     for file in files.body {
         println!("{}, {}", file.name, file.id);
     }
+    Ok(())
+}
+
+async fn download_file(file_id: String) -> Result<()> {
+    let google_drive = get_drive_client()
+        .await
+        .expect("Failed to get Google Drive client");
+    let file_client = google_drive.files();
+    let file_name = file_client.get(&file_id,false, "", false, false).await?.body.name;
+    let home_dir = dirs::home_dir().expect("Could not determine home directory");
+    let home_dir = home_dir.join(file_name);
+    println!("Downloading file to {}", home_dir.display());
+    let file = file_client.download_by_id(&file_id) 
+        .await.expect("Failed to get file");
+    tokio::fs::write(home_dir, file.body).await?;
     Ok(())
 }
 
