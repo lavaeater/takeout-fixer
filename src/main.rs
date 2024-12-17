@@ -9,6 +9,7 @@ mod ui;
 use oauth2::TokenResponse;
 use serde::{Deserialize, Serialize};
 use std::io;
+use dotenv::dotenv;
 use google_drive::traits::FileOps;
 use ratatui::prelude::CrosstermBackend;
 use ratatui::Terminal;
@@ -23,6 +24,7 @@ const TAKEOUT_FOLDER_ID: &str = "1M2IDkPkChp8nBisf18-p_2-ZhG-nFSIhk68Acy8GQIlEIl
 #[tokio::main]
 async fn main() -> AppResult<()> {
     // Create an application.
+    dotenv().ok();
     
     let mut app = App::new();
 
