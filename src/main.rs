@@ -1,5 +1,10 @@
+mod app;
+mod event;
+mod handler;
+mod tui;
+mod ui;
+
 use anyhow::Result;
-use clap::{Parser, Subcommand};
 use dotenv::dotenv;
 use google_drive::types::File;
 use google_drive::Client;
@@ -10,12 +15,18 @@ use oauth2::{
     RefreshToken, Scope, TokenResponse, TokenUrl,
 };
 use serde::{Deserialize, Serialize};
-use std::env;
+use std::{env, io};
 use std::path::PathBuf;
 use google_drive::traits::FileOps;
+use ratatui::prelude::CrosstermBackend;
+use ratatui::Terminal;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 use url::Url;
+use crate::app::{App, AppResult};
+use crate::event::{Event, EventHandler};
+use crate::handler::handle_key_events;
+use crate::tui::Tui;
 
 const REDIRECT_URI: &str = "http://localhost:8383";
 const TAKEOUT_FOLDER_ID: &str = "1M2IDkPkChp8nBisf18-p_2-ZhG-nFSIhk68Acy8GQIlEIlrCb6XAGDc0Ty30MEoQDr-JHu1m";
@@ -27,55 +38,36 @@ struct Tokens {
     expires_at: Option<u64>, // Optional timestamp for access token expiration
 }
 
-/// My CLI Tool
-#[derive(Parser)]
-#[command(author, version, about, long_about = None)]
-struct Cli {
-    /// The main command to run
-    #[command(subcommand)]
-    command: Commands,
-}
-
-#[derive(Subcommand)]
-enum Commands {
-    Takeout {
-        google_drive_folder: String,
-        output_folder: String,
-    },
-    List {
-        google_drive_folder: Option<String>,
-    },
-    DownloadFile {
-        file_id: String
-    }
-}
-
 #[tokio::main]
-async fn main() {
-    //Not sure if it has to be done this way.
-    tokio::task::spawn_blocking(|| {
-        dotenv().ok();
-    })
-    .await
-    .unwrap();
+async fn main() -> AppResult<()> {
+    // Create an application.
+    let mut app = App::new();
 
-    let cli = Cli::parse();
+    // Initialize the terminal user interface.
+    let backend = CrosstermBackend::new(io::stdout());
+    let terminal = Terminal::new(backend)?;
+    let events = EventHandler::new(250);
+    let mut tui = Tui::new(terminal, events);
+    tui.init()?;
 
-    match cli.command {
-        Commands::Takeout {
-            google_drive_folder,
-            output_folder,
-        } => {}
-        Commands::List { google_drive_folder } => {
-            list_google_drive(None)
-                .await
-                .expect("Failed to list Google Drive files");
-        }
-        Commands::DownloadFile { file_id } => {
-            download_file(file_id).await.expect("Failed to download file");
+    // Start the main loop.
+    while app.running {
+        // Render the user interface.
+        tui.draw(&mut app)?;
+        // Handle events.
+        match tui.events.next().await? {
+            Event::Tick => app.tick(),
+            Event::Key(key_event) => handle_key_events(key_event, &mut app)?,
+            Event::Mouse(_) => {}
+            Event::Resize(_, _) => {}
         }
     }
+
+    // Exit the user interface.
+    tui.exit()?;
+    Ok(())
 }
+
 /*
 {"state"=>"f19ea489-ea80-460a-905e-f4259227cc13", "code"=>"4/0AanRRrsbNdQnzqNqBYiluRBGkY6OiIbutw1goIG7VgS23ypELRuvS_ztJCNvaGLx1R3gBA", "scope"=>"https://www.googleapis.com/auth/drive", "controller"=>"supervisor/crm_integration", "action"=>"drive"}
  */
