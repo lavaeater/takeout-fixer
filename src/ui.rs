@@ -14,13 +14,12 @@ pub fn render(app: &mut App, frame: &mut Frame) {
     // - https://docs.rs/ratatui/latest/ratatui/widgets/index.html
     // - https://github.com/ratatui/ratatui/tree/master/examples
     frame.render_widget(
-        Paragraph::new(format!(
+        Paragraph::new(
             "This is a tui template.\n\
                 Press `Esc`, `Ctrl-C` or `q` to stop running.\n\
                 Press left and right to increment and decrement the counter respectively.\n\
                 Counter: {}",
-            app.counter
-        ))
+        )
         .block(
             Block::bordered()
                 .title("Template")
@@ -30,5 +29,6 @@ pub fn render(app: &mut App, frame: &mut Frame) {
         .style(Style::default().fg(Color::Cyan).bg(Color::Black))
         .centered(),
         frame.area(),
-    )
+    );
+    frame.render_widget(&app.file_list_widget, frame.area());
 }
