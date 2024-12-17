@@ -62,13 +62,9 @@ pub async fn login_google() -> anyhow::Result<Tokens> {
         ))
         .set_pkce_challenge(pkce_code_challenge)
         .url();
-
-    println!("Opening this URL in your browser:\n{authorize_url}\n");
     if let Err(err) = open::that(authorize_url.as_str()) {
         eprintln!("Failed to open browser: {}", err);
-    } else {
-        println!("Opened URL in the default browser!");
-    }
+    } 
     // A very naive implementation of the redirect server.
     let listener = TcpListener::bind("127.0.0.1:8383").await?;
     let code;
@@ -105,13 +101,6 @@ pub async fn login_google() -> anyhow::Result<Tokens> {
             break;
         }
     }
-    println!("Google returned the following code:\n{}\n", code.secret());
-    println!(
-        "Google returned the following state:\n{} (expected `{}`)\n",
-        state.secret(),
-        csrf_state.secret()
-    );
-
     // Exchange the code with a token.
     let token_response = client
         .exchange_code(code)
@@ -119,7 +108,6 @@ pub async fn login_google() -> anyhow::Result<Tokens> {
         .request_async(&async_http_client)
         .await;
 
-    println!("Google returned the following token:\n{token_response:?}\n");
     match token_response {
         Ok(token) => {
             let tokens = Tokens {
@@ -194,7 +182,6 @@ pub async fn download_file(file_id: String) -> anyhow::Result<()> {
     let file_name = file_client.get(&file_id, false, "", false, false).await?.body.name;
     let home_dir = dirs::home_dir().expect("Could not determine home directory");
     let home_dir = home_dir.join(file_name);
-    println!("Downloading file to {}", home_dir.display());
     let file = file_client.download_by_id(&file_id)
         .await.expect("Failed to get file");
     tokio::fs::write(home_dir, file.body).await?;
