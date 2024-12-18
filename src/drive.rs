@@ -7,7 +7,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use url::Url;
 use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
-use google_drive::Client;
+use google_drive::{Client, Response};
 use google_drive::traits::FileOps;
 use google_drive::types::File;
 use crate::TAKEOUT_FOLDER_ID;
@@ -159,6 +159,29 @@ pub async fn get_drive_client() -> Result<Client> {
 }
 
 pub const FOLDER_QUERY: &str = "mimeType = 'application/vnd.google-apps.folder'";
+
+pub async fn download_with_progress() {
+    let google_drive = get_drive_client()
+        .await
+        .expect("Failed to get Google Drive client");
+    let resp = self
+        .client
+        .request_raw(
+            reqwest::Method::GET,
+            &self.client.url(
+                &format!("/files/{}?supportsAllDrives=true&alt=media", id),
+                None,
+            ),
+            crate::Message::default(),
+        )
+        .await?;
+
+    Ok(Response::new(
+        resp.status(),
+        resp.headers().clone(),
+        resp.bytes().await?,
+    ))
+}
 
 pub async fn list_google_drive(folder: Option<String>) -> Result<Vec<File>> {
     let google_drive = get_drive_client()
