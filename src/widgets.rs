@@ -1,8 +1,12 @@
+use std::env;
 use crate::drive::{download_file, list_google_drive};
 use google_drive::types::File;
 use ratatui::prelude::{Buffer, Constraint, Rect, StatefulWidget, Style, Stylize, Widget};
 use ratatui::widgets::{Block, HighlightSpacing, Row, Table, TableState};
 use std::sync::{Arc, RwLock};
+use tokio::io::BufReader;
+use zip::read::read_zipfile_from_stream;
+use zip::ZipArchive;
 
 /// A widget that displays a list of pull requests.
 ///
@@ -105,7 +109,45 @@ impl FileListWidget {
 }
 
 pub async fn download_file_and_unzip_that_bitch(drive_item: DriveItem) -> anyhow::Result<()> {
-    let _bytes = download_file(drive_item).await?;
+    let (name, bytes) = download_file(drive_item).await?;
+    let file_path = dirs::home_dir().expect("Could not find home dir");
+    let target_folder = file_path.join(env::var("TARGET_FOLDER").expect("Missing the TARGET_FOLDER environment variable."));
+    let file_path = target_folder.clone().join(name);
+    tokio::fs::write(file_path.clone(), bytes).await?;
+    let f = std::fs::File::open(file_path).expect("GOEFOEF");
+    
+    let mut archive = ZipArchive::new(f).expect("Could not open");
+    for i in 0..archive.len() {
+        let mut file = archive.by_index(i)?;
+        let outpath = match file.enclosed_name() {
+            Some(path) => path,
+            None => continue,
+        };
+        let outpath = target_folder.clone().join(outpath);
+        
+        if file.is_dir() {
+            std::fs::create_dir_all(&outpath)?;
+        } else {
+            if let Some(p) = outpath.parent() {
+                if !p.exists() {
+                    std::fs::create_dir_all(p)?;
+                }
+            }
+            let mut outfile = std::fs::File::create(&outpath)?;
+            std::io::copy(&mut file, &mut outfile)?;
+        }
+
+        // // Get and Set permissions
+        // #[cfg(unix)]
+        // {
+        //     use std::os::unix::fs::PermissionsExt;
+        // 
+        //     if let Some(mode) = file.unix_mode() {
+        //         fs::set_permissions(&outpath, fs::Permissions::from_mode(mode)).unwrap();
+        //     }
+        // }
+    }
+    
     Ok(())
 }
 

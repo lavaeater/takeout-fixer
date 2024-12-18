@@ -181,15 +181,15 @@ pub async fn list_google_drive(folder: Option<DriveItem>) -> Result<Vec<File>> {
 }
 
 
-pub async fn download_file(drive_file: DriveItem) -> Result<Bytes> {
-    if let DriveItem::File(id, _) = drive_file {
+pub async fn download_file(drive_file: DriveItem) -> Result<(String, Bytes)> {
+    if let DriveItem::File(id, name) = drive_file {
         let google_drive = get_drive_client()
             .await
             .expect("Failed to get Google Drive client");
         let file_client = google_drive.files();
         let file_response = file_client.download_by_id(&id)
             .await.expect("Failed to get file");
-        Ok(file_response.body)
+        Ok((name, file_response.body))
     } else {
         Err(anyhow::anyhow!("Not a file"))
     }
