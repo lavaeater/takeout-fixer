@@ -17,7 +17,7 @@ pub struct FileListWidget {
 
 #[derive(Debug, Default)]
 pub struct FileListState {
-    files: Vec<DriveFile>,
+    files: Vec<DriveItem>,
     loading_state: LoadingState,
     table_state: TableState,
 }
@@ -36,22 +36,12 @@ impl FileListWidget {
     ///
     /// This method spawns a background task that fetches the pull requests from the GitHub API.
     /// The result of the fetch is then passed to the `on_load` or `on_err` methods.
-    pub fn list_files(&self, folder: Option<DriveFile>) {
+    pub fn list_files(&self, folder: Option<DriveItem>) {
         let this = self.clone(); // clone the widget to pass to the background task
         tokio::spawn(this.fetch_files_in_folder(folder));
     }
-    //
-    // async fn fetch_files(self) {
-    //     // this runs once, but you could also run this in a loop, using a channel that accepts
-    //     // messages to refresh on demand, or with an interval timer to refresh every N seconds
-    //     self.set_loading_state(LoadingState::Loading);
-    //     match list_google_drive(None).await {
-    //         Ok(files) => self.on_load(&files),
-    //         Err(err) => self.on_err(&err),
-    //     }
-    // }
 
-    async fn fetch_files_in_folder(self, folder: Option<DriveFile>) {
+    async fn fetch_files_in_folder(self, folder: Option<DriveItem>) {
         // this runs once, but you could also run this in a loop, using a channel that accepts
         // messages to refresh on demand, or with an interval timer to refresh every N seconds
         self.set_loading_state(LoadingState::Loading);
@@ -62,11 +52,20 @@ impl FileListWidget {
     }
 
     fn on_load(&self, files: &Vec<File>) {
-        let d_files = files.iter().map(Into::into);
+        let mut all_files: Vec<DriveItem> = files.iter().map(Into::into).collect();
+        all_files.sort_by(|a, b| match (a, b) {
+            (DriveItem::Folder { .. }, DriveItem::File { .. }) => std::cmp::Ordering::Less,
+            (DriveItem::File { .. }, DriveItem::Folder { .. }) => std::cmp::Ordering::Greater,
+            (DriveItem::Folder(.., name_a), DriveItem::Folder(.., name_b))
+            | (DriveItem::File(.., name_a), DriveItem::File(.., name_b)) => {
+                name_a.to_lowercase().cmp(&name_b.to_lowercase())
+            }
+        });
+
         let mut state = self.state.write().unwrap();
         state.loading_state = LoadingState::Loaded;
         state.files.clear();
-        state.files.extend(d_files);
+        state.files.extend(all_files);
         if !state.files.is_empty() {
             state.table_state.select(Some(0));
         }
@@ -89,36 +88,25 @@ impl FileListWidget {
     }
 
     pub fn process_file(&self) {
-        let mut file = DriveFile {
-            id: "".to_string(),
-            name: "".to_string(),
-            is_folder: false,
-        };
         if let Ok(state) = self.state.read() {
             if let Some(selected) = state.table_state.selected() {
-                file = state.files[selected].clone();
-            }
-        }
-        if !file.id.is_empty() {
-            if file.is_folder {
-                self.list_files(Some(file.clone()));
-            } else {
-                tokio::spawn(download_file_and_unzip_that_bitch(file.id.clone()));
+                let file = &state.files[selected];
+                match file {
+                    DriveItem::File(_, _) => {
+                        tokio::spawn(download_file_and_unzip_that_bitch(file.clone()));
+                    }
+                    DriveItem::Folder(_, _) => {
+                        self.list_files(Some(file.clone()));
+                    }
+                }
             }
         }
     }
 }
 
-pub async fn download_file_and_unzip_that_bitch(id: String) -> anyhow::Result<()> {
-    match download_file(&id).await {
-        Ok(bytes) => {
-            let _b = bytes.clone();
-            Ok(())
-        }
-        Err(_) => {
-            panic!("BIIITCH")
-        }
-    }
+pub async fn download_file_and_unzip_that_bitch(drive_item: DriveItem) -> anyhow::Result<()> {
+    let _bytes = download_file(drive_item).await?;
+    Ok(())
 }
 
 impl Widget for &FileListWidget {
@@ -151,25 +139,27 @@ impl Widget for &FileListWidget {
 }
 
 #[derive(Debug, Clone)]
-pub struct DriveFile {
-    pub id: String,
-    pub name: String,
-    pub is_folder: bool,
+pub enum DriveItem {
+    File(String, String),
+    Folder(String, String),
 }
 
-impl From<&DriveFile> for Row<'_> {
-    fn from(df: &DriveFile) -> Self {
+impl From<&DriveItem> for Row<'_> {
+    fn from(df: &DriveItem) -> Self {
         let df = df.clone();
-        Row::new(vec![df.id, df.name, df.is_folder.to_string()])
+        match df {
+            DriveItem::File(id, name) => Row::new(vec![id, name, "File".to_string()]),
+            DriveItem::Folder(id, name) => Row::new(vec![id, name, "Folder".to_string()]),
+        }
     }
 }
 
-impl From<&File> for DriveFile {
+impl From<&File> for DriveItem {
     fn from(file: &File) -> Self {
-        Self {
-            id: file.id.to_string(),
-            name: file.name.to_string(),
-            is_folder: file.mime_type == "application/vnd.google-apps.folder",
+        if file.mime_type == "application/vnd.google-apps.folder" {
+            DriveItem::Folder(file.id.to_string(), file.name.to_string())
+        } else {
+            DriveItem::File(file.id.to_string(), file.name.to_string())
         }
     }
 }

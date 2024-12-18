@@ -12,7 +12,7 @@ use google_drive::traits::FileOps;
 use google_drive::types::File;
 use anyhow::Result;
 use bytes::Bytes;
-use crate::widgets::DriveFile;
+use crate::widgets::DriveItem;
 
 const REDIRECT_URI: &str = "http://localhost:8383";
 
@@ -159,41 +159,40 @@ pub async fn get_drive_client() -> Result<Client> {
     ))
 }
 
-pub const FOLDER_QUERY: &str = "'root' in parents";
+pub async fn list_google_drive(folder: Option<DriveItem>) -> Result<Vec<File>> {
+    let mut folder_id = "root".to_string();
+    
+    if let Some(DriveItem::Folder(id, _)) = folder {
+            folder_id = id;
+    }
 
-pub async fn list_google_drive(folder: Option<DriveFile>) -> Result<Vec<File>> {
     let google_drive = get_drive_client()
         .await
         .expect("Failed to get Google Drive client");
     let file_client = google_drive.files();
-    let response;
-    if let Some(folder) = folder {
-        response = file_client
-            .list_all(
-                "user", "", false, "",
-                false, "name", format!("'{}' in parents", folder.id).as_str(),
-                "", true, false, "")
-            .await?;
-    } else {
-        response = file_client
-            .list_all(
-                "user", "", false, "",
-                false, "name", FOLDER_QUERY,
-                "", true, false, "")
-            .await?;
-    }
+
+    let response = file_client
+        .list_all(
+            "user", "", false, "",
+            false, "name", format!("'{}' in parents", folder_id).as_str(),
+            "", true, false, "")
+        .await?;
     Ok(response.body)
 }
 
-pub async fn download_file(file_id: &str) -> Result<Bytes> {
-    let google_drive = get_drive_client()
-        .await
-        .expect("Failed to get Google Drive client");
-    let file_client = google_drive.files();
-    let file = file_client.download_by_id(file_id)
-        .await.expect("Failed to get file");
-    // tokio::fs::write(home_dir, file.body).await?;
-    Ok(file.body)
+
+pub async fn download_file(drive_file: DriveItem) -> Result<Bytes> {
+    if let DriveItem::File(id, _) = drive_file {
+        let google_drive = get_drive_client()
+            .await
+            .expect("Failed to get Google Drive client");
+        let file_client = google_drive.files();
+        let file_response = file_client.download_by_id(&id)
+            .await.expect("Failed to get file");
+        Ok(file_response.body)
+    } else {
+        Err(anyhow::anyhow!("Not a file"))
+    }
 }
 
 fn get_token_file_path() -> PathBuf {
