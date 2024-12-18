@@ -10,9 +10,9 @@ use serde::{Deserialize, Serialize};
 use google_drive::{Client};
 use google_drive::traits::FileOps;
 use google_drive::types::File;
-use crate::TAKEOUT_FOLDER_ID;
 use anyhow::Result;
 use bytes::Bytes;
+use crate::widgets::DriveFile;
 
 const REDIRECT_URI: &str = "http://localhost:8383";
 
@@ -159,19 +159,29 @@ pub async fn get_drive_client() -> Result<Client> {
     ))
 }
 
-pub const FOLDER_QUERY: &str = "mimeType = 'application/vnd.google-apps.folder'";
+pub const FOLDER_QUERY: &str = "'root'+in+parents";
 
-pub async fn list_google_drive(_folder: Option<String>) -> Result<Vec<File>> {
+pub async fn list_google_drive(folder: Option<DriveFile>) -> Result<Vec<File>> {
     let google_drive = get_drive_client()
         .await
         .expect("Failed to get Google Drive client");
     let file_client = google_drive.files();
-    let response = file_client
-        .list_all(
-            "user", "", false, "",
-            false, "name", format!("'{}' in parents", TAKEOUT_FOLDER_ID).as_str(),
-            "", true, false, "")
-        .await?;
+    let response;
+    if let Some(folder) = folder {
+        response = file_client
+            .list_all(
+                "user", "", false, "",
+                false, "name", format!("'{}' in parents", folder.id).as_str(),
+                "", true, false, "")
+            .await?;
+    } else {
+        response = file_client
+            .list_all(
+                "user", "", false, "",
+                false, "name", FOLDER_QUERY,
+                "", true, false, "")
+            .await?;
+    }
     Ok(response.body)
 }
 
@@ -180,9 +190,6 @@ pub async fn download_file(file_id: &str) -> Result<Bytes> {
         .await
         .expect("Failed to get Google Drive client");
     let file_client = google_drive.files();
-    let file_name = file_client.get(&file_id, false, "", false, false).await?.body.name;
-    let home_dir = dirs::home_dir().expect("Could not determine home directory");
-    let home_dir = home_dir.join(file_name);
     let file = file_client.download_by_id(file_id)
         .await.expect("Failed to get file");
     // tokio::fs::write(home_dir, file.body).await?;

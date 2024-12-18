@@ -15,8 +15,6 @@ use crate::event::{Event, EventHandler};
 use crate::handler::handle_key_events;
 use crate::tui::Tui;
 
-const TAKEOUT_FOLDER_ID: &str = "1M2IDkPkChp8nBisf18-p_2-ZhG-nFSIhk68Acy8GQIlEIlrCb6XAGDc0Ty30MEoQDr-JHu1m";
-
 #[tokio::main]
 async fn main() -> AppResult<()> {
     // Create an application.

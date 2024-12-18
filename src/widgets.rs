@@ -1,9 +1,8 @@
-use std::future::Future;
-use std::sync::{Arc, RwLock};
-use google_drive::types::File;
-use ratatui::prelude::{Buffer, Constraint, Line, Rect, StatefulWidget, Style, Stylize, Widget};
-use ratatui::widgets::{Block, HighlightSpacing, Row, Table, TableState};
 use crate::drive::{download_file, list_google_drive};
+use google_drive::types::File;
+use ratatui::prelude::{Buffer, Constraint, Rect, StatefulWidget, Style, Stylize, Widget};
+use ratatui::widgets::{Block, HighlightSpacing, Row, Table, TableState};
+use std::sync::{Arc, RwLock};
 
 /// A widget that displays a list of pull requests.
 ///
@@ -37,24 +36,36 @@ impl FileListWidget {
     ///
     /// This method spawns a background task that fetches the pull requests from the GitHub API.
     /// The result of the fetch is then passed to the `on_load` or `on_err` methods.
-    pub fn list_files(&self) {
+    pub fn list_files(&self, folder: Option<DriveFile>) {
         let this = self.clone(); // clone the widget to pass to the background task
-        tokio::spawn(this.fetch_files());
+        tokio::spawn(this.fetch_files_in_folder(folder));
     }
+    //
+    // async fn fetch_files(self) {
+    //     // this runs once, but you could also run this in a loop, using a channel that accepts
+    //     // messages to refresh on demand, or with an interval timer to refresh every N seconds
+    //     self.set_loading_state(LoadingState::Loading);
+    //     match list_google_drive(None).await {
+    //         Ok(files) => self.on_load(&files),
+    //         Err(err) => self.on_err(&err),
+    //     }
+    // }
 
-    async fn fetch_files(self) {
+    async fn fetch_files_in_folder(self, folder: Option<DriveFile>) {
         // this runs once, but you could also run this in a loop, using a channel that accepts
         // messages to refresh on demand, or with an interval timer to refresh every N seconds
         self.set_loading_state(LoadingState::Loading);
-        match list_google_drive(None).await {
+        match list_google_drive(folder).await {
             Ok(files) => self.on_load(&files),
             Err(err) => self.on_err(&err),
         }
     }
+
     fn on_load(&self, files: &Vec<File>) {
         let d_files = files.iter().map(Into::into);
         let mut state = self.state.write().unwrap();
         state.loading_state = LoadingState::Loaded;
+        state.files.clear();
         state.files.extend(d_files);
         if !state.files.is_empty() {
             state.table_state.select(Some(0));
@@ -76,24 +87,37 @@ impl FileListWidget {
     pub fn scroll_up(&self) {
         self.state.write().unwrap().table_state.scroll_up_by(1);
     }
-    
+
     pub fn process_file(&self) {
-        let state = self.state.read().unwrap();
-        let selected = state.table_state.selected().unwrap();
-        let file = &state.files[selected];
-        let this = self.clone();
-        tokio::spawn(this.download_file_and_unzip_that_bitch(&file.id));
+        let mut file = DriveFile {
+            id: "".to_string(),
+            name: "".to_string(),
+            is_folder: false,
+        };
+        if let Ok(state) = self.state.read() {
+            if let Some(selected) = state.table_state.selected() {
+                file = state.files[selected].clone();
+            }
+        }
+        if !file.id.is_empty() {
+            if file.is_folder {
+                self.list_files(Some(file.clone()));
+            } else {
+                tokio::spawn(download_file_and_unzip_that_bitch(file.id.clone()));
+            }
+        }
     }
-    
-    pub async fn download_file_and_unzip_that_bitch(self, id: &str) {
-        match download_file(id).await {
-            Ok(bytes) => {
-                
-            }
-            Err(_) => {
-                panic!("BIIITCH")
-            }
-        } 
+}
+
+pub async fn download_file_and_unzip_that_bitch(id: String) -> anyhow::Result<()> {
+    match download_file(&id).await {
+        Ok(bytes) => {
+            let _b = bytes.clone();
+            Ok(())
+        }
+        Err(_) => {
+            panic!("BIIITCH")
+        }
     }
 }
 
@@ -127,11 +151,10 @@ impl Widget for &FileListWidget {
 }
 
 #[derive(Debug, Clone)]
-struct DriveFile {
-    id: String,
-    name: String,
-    url: String,
-    is_folder: bool,
+pub struct DriveFile {
+    pub id: String,
+    pub name: String,
+    pub is_folder: bool,
 }
 
 impl From<&DriveFile> for Row<'_> {
@@ -146,7 +169,6 @@ impl From<&File> for DriveFile {
         Self {
             id: file.id.to_string(),
             name: file.name.to_string(),
-            url: file.web_view_link.to_string(),
             is_folder: file.mime_type == "application/vnd.google-apps.folder",
         }
     }
