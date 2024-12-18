@@ -1,12 +1,9 @@
-use std::env;
-use std::io::Cursor;
 use crate::drive::{download, get_file_path, list_google_drive};
 use google_drive::types::File;
-use ratatui::prelude::{Buffer, Constraint, Line, Rect, StatefulWidget, Style, Stylize, Widget};
+use ratatui::prelude::{Buffer, Constraint, Rect, StatefulWidget, Style, Stylize, Widget};
 use ratatui::widgets::{Block, HighlightSpacing, Row, Table, TableState};
+use std::io::Cursor;
 use std::sync::{Arc, RwLock};
-use futures::TryStreamExt;
-use tokio::io::{AsyncWriteExt};
 use zip::ZipArchive;
 
 /// A widget that displays a list of pull requests.
@@ -87,7 +84,7 @@ impl FileListWidget {
     fn set_loading_state(&self, state: LoadingState) {
         self.state.write().unwrap().loading_state = state;
     }
-    
+
     pub fn update_file_progress(&self, file_name: &str, progress: f64) {
         if let Ok(mut state) = self.state.write() {
             state.progress = progress;
@@ -121,12 +118,12 @@ impl FileListWidget {
             }
         }
     }
-    
+
     pub fn download_to_disk(&self, file_item: &DriveItem) {
         let this = self.clone();
         tokio::spawn(this.download_and_unzip_with_progress(file_item.clone()));
     }
-    
+
     async fn download_and_unzip_with_progress(self, file_item: DriveItem) -> anyhow::Result<()> {
         self.set_loading_state(LoadingState::Downloading);
         if let DriveItem::File(id, name) = file_item {
@@ -167,27 +164,6 @@ impl FileListWidget {
                     let mut outfile = std::fs::File::create(&out_path)?;
                     std::io::copy(&mut file, &mut outfile)?;
                 }
-            }
-        }
-        self.set_loading_state(LoadingState::Idle);
-        Ok(())
-    }
-    
-    async fn download_with_progress(self, file_item: DriveItem) -> anyhow::Result<()>{
-        self.set_loading_state(LoadingState::Downloading);
-        if let DriveItem::File(id, name) = file_item {
-            let mut a_f = tokio::fs::OpenOptions::new()
-                .create(true)
-                .truncate(true)
-                .write(true)
-                .open(get_file_path(&name))
-                .await?;
-            let mut response = download(id).await?;
-            let size = response.content_length().unwrap_or_default();
-            let mut written = usize::default();
-            while let Some(chunk) = response.chunk().await? {
-                written += a_f.write(chunk.as_ref()).await?;
-                self.update_file_progress(&name, written as f64 / size as f64);
             }
         }
         self.set_loading_state(LoadingState::Idle);

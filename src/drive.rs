@@ -1,22 +1,18 @@
 use crate::widgets::DriveItem;
 use anyhow::Result;
-use bytes::Bytes;
-use google_drive::traits::FileOps;
 use google_drive::types::File;
-use google_drive::{Client, Response, RootDefaultServer};
+use google_drive::{Client, RootDefaultServer};
 use oauth2::basic::BasicClient;
 use oauth2::reqwest::async_http_client;
 use oauth2::{
-    http, AuthUrl, AuthorizationCode, ClientId, ClientSecret, CsrfToken, PkceCodeChallenge,
-    RedirectUrl, RefreshToken, Scope, TokenResponse, TokenUrl,
+    AuthUrl, AuthorizationCode, ClientId, ClientSecret, CsrfToken, PkceCodeChallenge, RedirectUrl,
+    RefreshToken, Scope, TokenResponse, TokenUrl,
 };
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::path::PathBuf;
-use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
-use tokio::sync::RwLock;
 use url::Url;
 
 const REDIRECT_URI: &str = "http://localhost:8383";
@@ -195,9 +191,8 @@ pub async fn list_google_drive(folder: Option<DriveItem>) -> Result<Vec<File>> {
 
 pub fn get_file_path(file_name: &str) -> PathBuf {
     let file_path = dirs::home_dir().expect("Could not find home dir");
-    let target_folder = file_path.join(
-        env::var("TARGET_FOLDER").expect("Missing the TARGET_FOLDER environment variable."),
-    );
+    let target_folder = file_path
+        .join(env::var("TARGET_FOLDER").expect("Missing the TARGET_FOLDER environment variable."));
     target_folder.join(file_name)
 }
 
