@@ -1,21 +1,22 @@
-use std::env;
-use oauth2::basic::BasicClient;
-use oauth2::{AuthUrl, AuthorizationCode, ClientId, ClientSecret, CsrfToken, PkceCodeChallenge, RedirectUrl, RefreshToken, Scope, TokenResponse, TokenUrl};
-use oauth2::reqwest::async_http_client;
-use tokio::net::TcpListener;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use url::Url;
-use std::path::PathBuf;
-use serde::{Deserialize, Serialize};
-use google_drive::{Client};
-use google_drive::traits::FileOps;
-use google_drive::types::File;
+use crate::widgets::DriveItem;
 use anyhow::Result;
 use bytes::Bytes;
-use crate::widgets::DriveItem;
+use google_drive::traits::FileOps;
+use google_drive::types::File;
+use google_drive::{Client, Response, RootDefaultServer};
+use oauth2::basic::BasicClient;
+use oauth2::reqwest::async_http_client;
+use oauth2::{http, AuthUrl, AuthorizationCode, ClientId, ClientSecret, CsrfToken, PkceCodeChallenge, RedirectUrl, RefreshToken, Scope, TokenResponse, TokenUrl};
+use serde::{Deserialize, Serialize};
+use std::env;
+use std::path::PathBuf;
+use std::sync::Arc;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::net::TcpListener;
+use tokio::sync::RwLock;
+use url::Url;
 
 const REDIRECT_URI: &str = "http://localhost:8383";
-
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Tokens {
@@ -65,7 +66,7 @@ pub async fn login_google() -> anyhow::Result<Tokens> {
         .url();
     if let Err(err) = open::that(authorize_url.as_str()) {
         eprintln!("Failed to open browser: {}", err);
-    } 
+    }
     // A very naive implementation of the redirect server.
     let listener = TcpListener::bind("127.0.0.1:8383").await?;
     let code;
@@ -161,9 +162,9 @@ pub async fn get_drive_client() -> Result<Client> {
 
 pub async fn list_google_drive(folder: Option<DriveItem>) -> Result<Vec<File>> {
     let mut folder_id = "root".to_string();
-    
+
     if let Some(DriveItem::Folder(id, _)) = folder {
-            folder_id = id;
+        folder_id = id;
     }
 
     let google_drive = get_drive_client()
@@ -173,13 +174,21 @@ pub async fn list_google_drive(folder: Option<DriveItem>) -> Result<Vec<File>> {
 
     let response = file_client
         .list_all(
-            "user", "", false, "",
-            false, "name", format!("'{}' in parents", folder_id).as_str(),
-            "", true, false, "")
+            "user",
+            "",
+            false,
+            "",
+            false,
+            "name",
+            format!("'{}' in parents", folder_id).as_str(),
+            "",
+            true,
+            false,
+            "",
+        )
         .await?;
     Ok(response.body)
 }
-
 
 pub async fn download_file(drive_file: DriveItem) -> Result<String> {
     if let DriveItem::File(id, name) = drive_file {
@@ -187,10 +196,14 @@ pub async fn download_file(drive_file: DriveItem) -> Result<String> {
             .await
             .expect("Failed to get Google Drive client");
         let file_client = google_drive.files();
-        let file_response = file_client.download_by_id(&id)
-            .await.expect("Failed to get file");
+        let file_response = file_client
+            .download_by_id(&id)
+            .await
+            .expect("Failed to get file");
         let file_path = dirs::home_dir().expect("Could not find home dir");
-        let target_folder = file_path.join(env::var("TARGET_FOLDER").expect("Missing the TARGET_FOLDER environment variable."));
+        let target_folder = file_path.join(
+            env::var("TARGET_FOLDER").expect("Missing the TARGET_FOLDER environment variable."),
+        );
         let file_path = target_folder.clone().join(name);
         tokio::fs::write(file_path.clone(), file_response.body).await?;
         Ok(file_path.to_str().unwrap().to_string())
@@ -260,4 +273,28 @@ async fn refresh_access_token(refresh_token: &str) -> anyhow::Result<Tokens> {
     save_tokens(&new_tokens).await?;
 
     Ok(new_tokens)
+}
+
+pub async fn download(id: String) -> Result<Response<bytes::Bytes>> {
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()?;
+
+    let host = RootDefaultServer::default().default_url().to_string();
+    let uri = format!(
+        "{}{}",
+        host,
+        format!("/files/{}?supportsAllDrives=true&alt=media", id)
+    );
+
+    let tokens = ensure_tokens().await?;
+
+    let auth_string = format!("Bearer {}", );
+    let req = client
+        .request(reqwest::Method::GET, uri)
+        .header(reqwest::header::AUTHORIZATION, &*auth_string)
+        .header(reqwest::header::ACCEPT, "application/json")
+        .build()?;
+    let resp = client.execute(req).await?;
+    resp.bytes_stream()
 }
