@@ -68,11 +68,11 @@ impl FileListWidget {
         self.state.write().unwrap().loading_state = state;
     }
 
-    fn scroll_down(&self) {
+    pub fn scroll_down(&self) {
         self.state.write().unwrap().table_state.scroll_down_by(1);
     }
 
-    fn scroll_up(&self) {
+    pub fn scroll_up(&self) {
         self.state.write().unwrap().table_state.scroll_up_by(1);
     }
 }

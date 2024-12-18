@@ -7,7 +7,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use url::Url;
 use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
-use google_drive::{Client, Response};
+use google_drive::{Client};
 use google_drive::traits::FileOps;
 use google_drive::types::File;
 use crate::TAKEOUT_FOLDER_ID;
@@ -54,7 +54,7 @@ pub async fn login_google() -> anyhow::Result<Tokens> {
     let (pkce_code_challenge, pkce_code_verifier) = PkceCodeChallenge::new_random_sha256();
 
     // Generate the authorization URL to which we'll redirect the user.
-    let (authorize_url, csrf_state) = client
+    let (authorize_url, _csrf_state) = client
         .authorize_url(CsrfToken::new_random)
         // This example is requesting access to the "calendar" features and the user's profile.
         .add_scope(Scope::new(
@@ -68,7 +68,7 @@ pub async fn login_google() -> anyhow::Result<Tokens> {
     // A very naive implementation of the redirect server.
     let listener = TcpListener::bind("127.0.0.1:8383").await?;
     let code;
-    let state;
+    let _state;
     loop {
         if let Ok((mut stream, _)) = listener.accept().await {
             let mut reader = BufReader::new(&mut stream);
@@ -84,7 +84,7 @@ pub async fn login_google() -> anyhow::Result<Tokens> {
                 .map(|(_, code)| AuthorizationCode::new(code.into_owned()))
                 .unwrap();
 
-            state = url
+            _state = url
                 .query_pairs()
                 .find(|(key, _)| key == "state")
                 .map(|(_, state)| CsrfToken::new(state.into_owned()))
@@ -160,30 +160,7 @@ pub async fn get_drive_client() -> Result<Client> {
 
 pub const FOLDER_QUERY: &str = "mimeType = 'application/vnd.google-apps.folder'";
 
-pub async fn download_with_progress() {
-    let google_drive = get_drive_client()
-        .await
-        .expect("Failed to get Google Drive client");
-    let resp = self
-        .client
-        .request_raw(
-            reqwest::Method::GET,
-            &self.client.url(
-                &format!("/files/{}?supportsAllDrives=true&alt=media", id),
-                None,
-            ),
-            crate::Message::default(),
-        )
-        .await?;
-
-    Ok(Response::new(
-        resp.status(),
-        resp.headers().clone(),
-        resp.bytes().await?,
-    ))
-}
-
-pub async fn list_google_drive(folder: Option<String>) -> Result<Vec<File>> {
+pub async fn list_google_drive(_folder: Option<String>) -> Result<Vec<File>> {
     let google_drive = get_drive_client()
         .await
         .expect("Failed to get Google Drive client");

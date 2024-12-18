@@ -6,14 +6,10 @@ pub(crate) mod drive;
 mod widgets;
 mod ui;
 
-use oauth2::TokenResponse;
-use serde::{Deserialize, Serialize};
 use std::io;
 use dotenv::dotenv;
-use google_drive::traits::FileOps;
 use ratatui::prelude::CrosstermBackend;
 use ratatui::Terminal;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 use crate::app::{App, AppResult};
 use crate::event::{Event, EventHandler};
 use crate::handler::handle_key_events;
@@ -42,8 +38,8 @@ async fn main() -> AppResult<()> {
         // Handle events.
         match tui.events.next().await? {
             Event::Key(key_event) => handle_key_events(key_event, &mut app)?,
-            Event::Mouse(_) => {}
-            Event::Resize(_, _) => {}
+            Event::Mouse(_mouse_event) => {}
+            Event::Resize(_x, _y) => {}
             Event::Tick => {}
         }
     }

@@ -18,7 +18,10 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
             app.file_list_widget.list_files();
         }
         KeyCode::Up => {
-            app.file_list_widget.list_files();
+            app.file_list_widget.scroll_up();
+        }
+        KeyCode::Down => {
+            app.file_list_widget.scroll_down();
         }
         // Other handlers you could add here.
         _ => {}
