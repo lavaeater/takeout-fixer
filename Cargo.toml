@@ -1,12 +1,12 @@
-cargo-features = ["codegen-backend"]
+#cargo-features = ["codegen-backend"]
 
 [package]
 name = "takeout_fixer"
 version = "0.1.0"
 edition = "2021"
 
-[profile.dev]
-codegen-backend = "cranelift"
+#[profile.dev]
+#codegen-backend = "cranelift"
 
 [dependencies]
 oauth2 = "4.4.2"
