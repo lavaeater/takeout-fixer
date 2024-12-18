@@ -159,7 +159,7 @@ pub async fn get_drive_client() -> Result<Client> {
     ))
 }
 
-pub const FOLDER_QUERY: &str = "'root'+in+parents";
+pub const FOLDER_QUERY: &str = "'root' in parents";
 
 pub async fn list_google_drive(folder: Option<DriveFile>) -> Result<Vec<File>> {
     let google_drive = get_drive_client()
