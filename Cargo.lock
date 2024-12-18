@@ -2555,6 +2555,7 @@ name = "takeout_fixer"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bytes",
  "chrono",
  "crossterm",
  "dirs",

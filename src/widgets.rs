@@ -1,8 +1,9 @@
+use std::future::Future;
 use std::sync::{Arc, RwLock};
 use google_drive::types::File;
 use ratatui::prelude::{Buffer, Constraint, Line, Rect, StatefulWidget, Style, Stylize, Widget};
 use ratatui::widgets::{Block, HighlightSpacing, Row, Table, TableState};
-use crate::drive::list_google_drive;
+use crate::drive::{download_file, list_google_drive};
 
 /// A widget that displays a list of pull requests.
 ///
@@ -75,26 +76,45 @@ impl FileListWidget {
     pub fn scroll_up(&self) {
         self.state.write().unwrap().table_state.scroll_up_by(1);
     }
+    
+    pub fn process_file(&self) {
+        let state = self.state.read().unwrap();
+        let selected = state.table_state.selected().unwrap();
+        let file = &state.files[selected];
+        let this = self.clone();
+        tokio::spawn(this.download_file_and_unzip_that_bitch(&file.id));
+    }
+    
+    pub async fn download_file_and_unzip_that_bitch(self, id: &str) {
+        match download_file(id).await {
+            Ok(bytes) => {
+                
+            }
+            Err(_) => {
+                panic!("BIIITCH")
+            }
+        } 
+    }
 }
 
 impl Widget for &FileListWidget {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let mut state = self.state.write().unwrap();
 
-        // a block with a right aligned title with the loading state on the right
-        let loading_state = Line::from(format!("{:?}", state.loading_state)).right_aligned();
+        // // a block with a right aligned title with the loading state on the right
+        // let loading_state = Line::from(format!("{:?}", state.loading_state)).right_aligned();
         let block = Block::bordered()
-            .title("Pull Requests")
-            .title(loading_state)
+            .title("File Id")
+            .title("File Name")
+            .title("Folder?")
             .title_bottom("j/k to scroll, q to quit");
 
         // a table with the list of pull requests
         let rows = state.files.iter();
         let widths = [
-            Constraint::Length(5),
-            Constraint::Fill(1),
-            Constraint::Max(49),
-            Constraint::Length(3),
+            Constraint::Percentage(25),
+            Constraint::Percentage(70),
+            Constraint::Percentage(5),
         ];
         let table = Table::new(rows, widths)
             .block(block)
@@ -117,7 +137,7 @@ struct DriveFile {
 impl From<&DriveFile> for Row<'_> {
     fn from(df: &DriveFile) -> Self {
         let df = df.clone();
-        Row::new(vec![df.id, df.name, df.url, df.is_folder.to_string()])
+        Row::new(vec![df.id, df.name, df.is_folder.to_string()])
     }
 }
 

@@ -12,6 +12,7 @@ use google_drive::traits::FileOps;
 use google_drive::types::File;
 use crate::TAKEOUT_FOLDER_ID;
 use anyhow::Result;
+use bytes::Bytes;
 
 const REDIRECT_URI: &str = "http://localhost:8383";
 
@@ -174,7 +175,7 @@ pub async fn list_google_drive(_folder: Option<String>) -> Result<Vec<File>> {
     Ok(response.body)
 }
 
-pub async fn download_file(file_id: String) -> anyhow::Result<()> {
+pub async fn download_file(file_id: &str) -> Result<Bytes> {
     let google_drive = get_drive_client()
         .await
         .expect("Failed to get Google Drive client");
@@ -182,10 +183,10 @@ pub async fn download_file(file_id: String) -> anyhow::Result<()> {
     let file_name = file_client.get(&file_id, false, "", false, false).await?.body.name;
     let home_dir = dirs::home_dir().expect("Could not determine home directory");
     let home_dir = home_dir.join(file_name);
-    let file = file_client.download_by_id(&file_id)
+    let file = file_client.download_by_id(file_id)
         .await.expect("Failed to get file");
-    tokio::fs::write(home_dir, file.body).await?;
-    Ok(())
+    // tokio::fs::write(home_dir, file.body).await?;
+    Ok(file.body)
 }
 
 fn get_token_file_path() -> PathBuf {
