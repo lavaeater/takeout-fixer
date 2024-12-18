@@ -1,11 +1,12 @@
 use std::env;
-use crate::drive::{download_file, list_google_drive};
+use std::io::Cursor;
+use crate::drive::{download, get_file_path, list_google_drive};
 use google_drive::types::File;
-use ratatui::prelude::{Buffer, Constraint, Rect, StatefulWidget, Style, Stylize, Widget};
+use ratatui::prelude::{Buffer, Constraint, Line, Rect, StatefulWidget, Style, Stylize, Widget};
 use ratatui::widgets::{Block, HighlightSpacing, Row, Table, TableState};
 use std::sync::{Arc, RwLock};
-use tokio::io::BufReader;
-use zip::read::read_zipfile_from_stream;
+use futures::TryStreamExt;
+use tokio::io::{AsyncWriteExt};
 use zip::ZipArchive;
 
 /// A widget that displays a list of pull requests.
@@ -24,6 +25,8 @@ pub struct FileListState {
     files: Vec<DriveItem>,
     loading_state: LoadingState,
     table_state: TableState,
+    progress: f64,
+    file_name: String,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -32,6 +35,8 @@ enum LoadingState {
     Idle,
     Loading,
     Loaded,
+    Downloading,
+    Unzipping,
     Error(String),
 }
 
@@ -82,6 +87,13 @@ impl FileListWidget {
     fn set_loading_state(&self, state: LoadingState) {
         self.state.write().unwrap().loading_state = state;
     }
+    
+    pub fn update_file_progress(&self, file_name: &str, progress: f64) {
+        if let Ok(mut state) = self.state.write() {
+            state.progress = progress;
+            state.file_name = file_name.to_string();
+        }
+    }
 
     pub fn scroll_down(&self) {
         self.state.write().unwrap().table_state.scroll_down_by(1);
@@ -97,7 +109,10 @@ impl FileListWidget {
                 let file = &state.files[selected];
                 match file {
                     DriveItem::File(_, _) => {
-                        tokio::spawn(download_file_and_unzip_that_bitch(file.clone()));
+                        if state.loading_state != LoadingState::Downloading {
+                            self.download_to_disk(file);
+                        }
+                        // tokio::spawn(download_file_and_unzip_that_bitch(file.clone()));
                     }
                     DriveItem::Folder(_, _) => {
                         self.list_files(Some(file.clone()));
@@ -106,16 +121,81 @@ impl FileListWidget {
             }
         }
     }
+    
+    pub fn download_to_disk(&self, file_item: &DriveItem) {
+        let this = self.clone();
+        tokio::spawn(this.download_and_unzip_with_progress(file_item.clone()));
+    }
+    
+    async fn download_and_unzip_with_progress(self, file_item: DriveItem) -> anyhow::Result<()> {
+        self.set_loading_state(LoadingState::Downloading);
+        if let DriveItem::File(id, name) = file_item {
+            let mut response = download(id).await?;
+            let size = response.content_length().unwrap_or_default();
+            let mut written = usize::default();
+            let mut acc = Vec::new();
+            while let Some(chunk) = response.chunk().await? {
+                acc.extend_from_slice(chunk.as_ref());
+                written += chunk.len();
+                self.update_file_progress(&name, written as f64 / size as f64);
+            }
+            // Create a Cursor for in-memory usage
+            let cursor = Cursor::new(acc);
+
+            self.set_loading_state(LoadingState::Unzipping);
+            // Use the zip crate to read from the stream
+            let mut archive = ZipArchive::new(cursor)?;
+            let archive_len = archive.len();
+            for i in 0..archive_len {
+                let mut file = archive.by_index(i)?;
+                let out_path = match file.enclosed_name() {
+                    Some(path) => path,
+                    None => continue,
+                };
+                self.update_file_progress(out_path.to_str().unwrap(), i as f64 / archive_len as f64);
+
+                let out_path = get_file_path(out_path.to_str().unwrap());
+
+                if file.is_dir() {
+                    std::fs::create_dir_all(&out_path)?;
+                } else {
+                    if let Some(p) = out_path.parent() {
+                        if !p.exists() {
+                            std::fs::create_dir_all(p)?;
+                        }
+                    }
+                    let mut outfile = std::fs::File::create(&out_path)?;
+                    std::io::copy(&mut file, &mut outfile)?;
+                }
+            }
+        }
+        self.set_loading_state(LoadingState::Idle);
+        Ok(())
+    }
+    
+    async fn download_with_progress(self, file_item: DriveItem) -> anyhow::Result<()>{
+        self.set_loading_state(LoadingState::Downloading);
+        if let DriveItem::File(id, name) = file_item {
+            let mut a_f = tokio::fs::OpenOptions::new()
+                .create(true)
+                .truncate(true)
+                .write(true)
+                .open(get_file_path(&name))
+                .await?;
+            let mut response = download(id).await?;
+            let size = response.content_length().unwrap_or_default();
+            let mut written = usize::default();
+            while let Some(chunk) = response.chunk().await? {
+                written += a_f.write(chunk.as_ref()).await?;
+                self.update_file_progress(&name, written as f64 / size as f64);
+            }
+        }
+        self.set_loading_state(LoadingState::Idle);
+        Ok(())
+    }
 }
 
-pub async fn download_file_and_unzip_that_bitch(drive_item: DriveItem) -> anyhow::Result<()> {
-
-    let file_path = dirs::home_dir().expect("Could not find home dir");
-    let target_folder = file_path.join(env::var("TARGET_FOLDER").expect("Missing the TARGET_FOLDER environment variable."));
-
-    let path = download_file(drive_item).await?;
-    let f = std::fs::File::open(path).expect("GOEFOEF");
-    
+/*
     let mut archive = ZipArchive::new(f).expect("Could not open");
     for i in 0..archive.len() {
         let mut file = archive.by_index(i)?;
@@ -136,32 +216,27 @@ pub async fn download_file_and_unzip_that_bitch(drive_item: DriveItem) -> anyhow
             let mut outfile = std::fs::File::create(&outpath)?;
             std::io::copy(&mut file, &mut outfile)?;
         }
-
-        // // Get and Set permissions
-        // #[cfg(unix)]
-        // {
-        //     use std::os::unix::fs::PermissionsExt;
-        // 
-        //     if let Some(mode) = file.unix_mode() {
-        //         fs::set_permissions(&outpath, fs::Permissions::from_mode(mode)).unwrap();
-        //     }
-        // }
-    }
-    
-    Ok(())
-}
-
+ */
 impl Widget for &FileListWidget {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let mut state = self.state.write().unwrap();
 
         // // a block with a right aligned title with the loading state on the right
-        // let loading_state = Line::from(format!("{:?}", state.loading_state)).right_aligned();
-        let block = Block::bordered()
+        let mut block = Block::bordered()
             .title("File Id")
             .title("File Name")
             .title("Folder?")
             .title_bottom("j/k to scroll, q to quit");
+        
+        if state.loading_state == LoadingState::Downloading {
+            let progress = format!("Downloading: {}, {:.2}%",state.file_name, state.progress * 100.0);
+            block = block.title_bottom(progress);
+        }
+
+        if state.loading_state == LoadingState::Unzipping {
+            let progress = format!("Unzipping: {}, {:.2}%",state.file_name, state.progress * 100.0);
+            block = block.title_bottom(progress);
+        }
 
         // a table with the list of pull requests
         let rows = state.files.iter();
