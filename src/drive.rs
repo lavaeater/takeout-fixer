@@ -181,7 +181,7 @@ pub async fn list_google_drive(folder: Option<DriveItem>) -> Result<Vec<File>> {
 }
 
 
-pub async fn download_file(drive_file: DriveItem) -> Result<(String, Bytes)> {
+pub async fn download_file(drive_file: DriveItem) -> Result<String> {
     if let DriveItem::File(id, name) = drive_file {
         let google_drive = get_drive_client()
             .await
@@ -189,7 +189,11 @@ pub async fn download_file(drive_file: DriveItem) -> Result<(String, Bytes)> {
         let file_client = google_drive.files();
         let file_response = file_client.download_by_id(&id)
             .await.expect("Failed to get file");
-        Ok((name, file_response.body))
+        let file_path = dirs::home_dir().expect("Could not find home dir");
+        let target_folder = file_path.join(env::var("TARGET_FOLDER").expect("Missing the TARGET_FOLDER environment variable."));
+        let file_path = target_folder.clone().join(name);
+        tokio::fs::write(file_path.clone(), file_response.body).await?;
+        Ok(file_path.to_str().unwrap().to_string())
     } else {
         Err(anyhow::anyhow!("Not a file"))
     }

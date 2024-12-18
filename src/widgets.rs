@@ -109,12 +109,8 @@ impl FileListWidget {
 }
 
 pub async fn download_file_and_unzip_that_bitch(drive_item: DriveItem) -> anyhow::Result<()> {
-    let (name, bytes) = download_file(drive_item).await?;
-    let file_path = dirs::home_dir().expect("Could not find home dir");
-    let target_folder = file_path.join(env::var("TARGET_FOLDER").expect("Missing the TARGET_FOLDER environment variable."));
-    let file_path = target_folder.clone().join(name);
-    tokio::fs::write(file_path.clone(), bytes).await?;
-    let f = std::fs::File::open(file_path).expect("GOEFOEF");
+    let path = download_file(drive_item).await?;
+    let f = std::fs::File::open(path).expect("GOEFOEF");
     
     let mut archive = ZipArchive::new(f).expect("Could not open");
     for i in 0..archive.len() {
@@ -123,7 +119,7 @@ pub async fn download_file_and_unzip_that_bitch(drive_item: DriveItem) -> anyhow
             Some(path) => path,
             None => continue,
         };
-        let outpath = target_folder.clone().join(outpath);
+        // let outpath = target_folder.clone().join(outpath);
         
         if file.is_dir() {
             std::fs::create_dir_all(&outpath)?;
