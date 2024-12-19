@@ -15,7 +15,7 @@ impl MigrationTrait for Migration {
                     .col(pk_auto(TakeoutZip::Id))
                     .col(string_uniq(TakeoutZip::DriveId))
                     .col(string(TakeoutZip::Name))
-                    .col(string_null(TakeoutZip::LocalPath))
+                    .col(string(TakeoutZip::LocalPath))
                     .col(string(TakeoutZip::Status))
                     .to_owned(),
             )

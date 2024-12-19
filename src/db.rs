@@ -21,10 +21,11 @@ pub async fn store_files(files: Vec<DriveItem>) -> anyhow::Result<()> {
         if let DriveItem::File(id, name) = &file {
             let takeout_zip =
                 takeout_zip::ActiveModel {
+                    id: Default::default(),
                     drive_id: Set(id.to_owned()),
                     name: Set(name.to_owned()),
                     status: Set("new".to_owned()),
-                    ..Default::default()
+                    local_path: Set("".to_owned()),
                 };
             let takeout_zip = takeout_zip.insert(&conn).await?;
         }
