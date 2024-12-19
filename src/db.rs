@@ -15,18 +15,32 @@ async fn get_db_connection() -> anyhow::Result<DatabaseConnection> {
     }
 }
 
+pub fn get_model(file: DriveItem) -> anyhow::Result<takeout_zip::ActiveModel> {
+    if let DriveItem::File(id, name) = file {
+        Ok(takeout_zip::ActiveModel {
+            id: Default::default(),
+            drive_id: Set(id),
+            name: Set(name),
+            status: Set("new".to_string()),
+            local_path: Set("".to_string()),
+        })
+    } else {
+        Err(anyhow::Error::msg("Not a File Item"))
+    }
+}
+
+pub async fn store_file(file: DriveItem) -> anyhow::Result<()> {
+    let conn = get_db_connection().await?;
+    let _takeout_zip = get_model(file)?.insert(&conn).await?;
+    Ok(())
+}
+
+#[allow(dead_code)]
 pub async fn store_files(files: Vec<DriveItem>) -> anyhow::Result<()> {
     let conn = get_db_connection().await?;
     for file in files {
-        if let DriveItem::File(id, name) = &file {
-            let takeout_zip = takeout_zip::ActiveModel {
-                id: Default::default(),
-                drive_id: Set(id.to_owned()),
-                name: Set(name.to_owned()),
-                status: Set("new".to_owned()),
-                local_path: Set("".to_owned()),
-            };
-            let _takeout_zip = takeout_zip.insert(&conn).await?;
+        if let DriveItem::File(_, _) = file {
+            let _takeout_zip = get_model(file)?.insert(&conn).await?;                
         }
     }
     Ok(())

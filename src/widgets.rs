@@ -5,7 +5,7 @@ use ratatui::widgets::{Block, HighlightSpacing, Row, Table, TableState};
 use std::io::Cursor;
 use std::sync::{Arc, RwLock};
 use zip::ZipArchive;
-use crate::db::store_files;
+use crate::db::{store_file};
 
 /// A widget that displays a list of pull requests.
 ///
@@ -35,7 +35,7 @@ enum LoadingState {
     Loading,
     Loaded,
     Downloading,
-    Unzipping,
+    Processing,
     Error(String),
 }
 
@@ -57,7 +57,15 @@ impl FileListWidget {
     }
 
     async fn store_files_in_db(self, files: Vec<DriveItem>) {
-        store_files(files).await.expect("Failed to store files");
+        self.set_loading_state(LoadingState::Processing);
+        let len = files.len();
+        for (i, file) in files.iter().enumerate() {
+            if let DriveItem::File(_, name) = file {
+                self.update_file_progress(&format!("Storing: {}", name), i as f64 / len as f64);
+                store_file(file.clone()).await.expect("Failed to store file");
+            }
+        }
+        self.set_loading_state(LoadingState::Idle);
     }
 
     async fn fetch_files_in_folder(self, folder: Option<DriveItem>) {
@@ -159,7 +167,7 @@ impl FileListWidget {
             // Create a Cursor for in-memory usage
             let cursor = Cursor::new(acc);
 
-            self.set_loading_state(LoadingState::Unzipping);
+            self.set_loading_state(LoadingState::Processing);
             // Use the zip crate to read from the stream
             let mut archive = ZipArchive::new(cursor)?;
             let archive_len = archive.len();
@@ -236,9 +244,9 @@ impl Widget for &FileListWidget {
             block = block.title_bottom(progress);
         }
 
-        if state.loading_state == LoadingState::Unzipping {
+        if state.loading_state == LoadingState::Processing {
             let progress = format!(
-                "Unzipping: {}, {:.2}%",
+                "Processing: {}, {:.2}%",
                 state.file_name,
                 state.progress * 100.0
             );
