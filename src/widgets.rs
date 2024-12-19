@@ -5,6 +5,7 @@ use ratatui::widgets::{Block, HighlightSpacing, Row, Table, TableState};
 use std::io::Cursor;
 use std::sync::{Arc, RwLock};
 use zip::ZipArchive;
+use crate::db::store_files;
 
 /// A widget that displays a list of pull requests.
 ///
@@ -24,6 +25,7 @@ pub struct FileListState {
     table_state: TableState,
     progress: f64,
     file_name: String,
+    current_folder: Option<DriveItem>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -47,10 +49,22 @@ impl FileListWidget {
         tokio::spawn(this.fetch_files_in_folder(folder));
     }
 
+    pub fn store_files(&self) {
+        let this = self.clone();
+        if let Ok(state) = self.state.read() {
+            tokio::spawn(this.store_files_in_db(state.files.clone()));
+        }
+    }
+
+    async fn store_files_in_db(self, files: Vec<DriveItem>) {
+        store_files(files).await.expect("Failed to store files");
+    }
+
     async fn fetch_files_in_folder(self, folder: Option<DriveItem>) {
         // this runs once, but you could also run this in a loop, using a channel that accepts
         // messages to refresh on demand, or with an interval timer to refresh every N seconds
         self.set_loading_state(LoadingState::Loading);
+        self.set_current_folder(folder.clone());
         match list_google_drive(folder).await {
             Ok(files) => self.on_load(&files),
             Err(err) => self.on_err(&err),
@@ -83,6 +97,12 @@ impl FileListWidget {
 
     fn set_loading_state(&self, state: LoadingState) {
         self.state.write().unwrap().loading_state = state;
+    }
+
+    fn set_current_folder(&self, folder: Option<DriveItem>) {
+        if let Some(folder) = folder {
+            self.state.write().unwrap().current_folder = Some(folder);
+        }
     }
 
     pub fn update_file_progress(&self, file_name: &str, progress: f64) {
@@ -149,7 +169,10 @@ impl FileListWidget {
                     Some(path) => path,
                     None => continue,
                 };
-                self.update_file_progress(out_path.to_str().unwrap(), i as f64 / archive_len as f64);
+                self.update_file_progress(
+                    out_path.to_str().unwrap(),
+                    i as f64 / archive_len as f64,
+                );
 
                 let out_path = get_file_path(out_path.to_str().unwrap());
 
@@ -172,27 +195,27 @@ impl FileListWidget {
 }
 
 /*
-    let mut archive = ZipArchive::new(f).expect("Could not open");
-    for i in 0..archive.len() {
-        let mut file = archive.by_index(i)?;
-        let outpath = match file.enclosed_name() {
-            Some(path) => path,
-            None => continue,
-        };
-        let outpath = target_folder.clone().join(outpath);
-        
-        if file.is_dir() {
-            std::fs::create_dir_all(&outpath)?;
-        } else {
-            if let Some(p) = outpath.parent() {
-                if !p.exists() {
-                    std::fs::create_dir_all(p)?;
-                }
-            }
-            let mut outfile = std::fs::File::create(&outpath)?;
-            std::io::copy(&mut file, &mut outfile)?;
-        }
- */
+   let mut archive = ZipArchive::new(f).expect("Could not open");
+   for i in 0..archive.len() {
+       let mut file = archive.by_index(i)?;
+       let outpath = match file.enclosed_name() {
+           Some(path) => path,
+           None => continue,
+       };
+       let outpath = target_folder.clone().join(outpath);
+
+       if file.is_dir() {
+           std::fs::create_dir_all(&outpath)?;
+       } else {
+           if let Some(p) = outpath.parent() {
+               if !p.exists() {
+                   std::fs::create_dir_all(p)?;
+               }
+           }
+           let mut outfile = std::fs::File::create(&outpath)?;
+           std::io::copy(&mut file, &mut outfile)?;
+       }
+*/
 impl Widget for &FileListWidget {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let mut state = self.state.write().unwrap();
@@ -202,16 +225,32 @@ impl Widget for &FileListWidget {
             .title("File Id")
             .title("File Name")
             .title("Folder?")
-            .title_bottom("j/k to scroll, q to quit");
-        
+            .title_bottom("j/k to scroll, enter to select / process, s to save to db, q to quit");
+
         if state.loading_state == LoadingState::Downloading {
-            let progress = format!("Downloading: {}, {:.2}%",state.file_name, state.progress * 100.0);
+            let progress = format!(
+                "Downloading: {}, {:.2}%",
+                state.file_name,
+                state.progress * 100.0
+            );
             block = block.title_bottom(progress);
         }
 
         if state.loading_state == LoadingState::Unzipping {
-            let progress = format!("Unzipping: {}, {:.2}%",state.file_name, state.progress * 100.0);
+            let progress = format!(
+                "Unzipping: {}, {:.2}%",
+                state.file_name,
+                state.progress * 100.0
+            );
             block = block.title_bottom(progress);
+        }
+
+        if let Some(folder) = &state.current_folder {
+            let folder_name = match folder {
+                DriveItem::Folder(_, name) => name,
+                _ => "",
+            };
+            block = block.title_top(format!("Files in: {}", folder_name));
         }
 
         // a table with the list of pull requests

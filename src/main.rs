@@ -5,6 +5,7 @@ mod tui;
 pub(crate) mod drive;
 mod widgets;
 mod ui;
+mod db;
 
 use std::io;
 use dotenv::dotenv;
