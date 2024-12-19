@@ -10,7 +10,6 @@ pub struct Model {
     pub drive_id: String,
     pub name: String,
     pub local_path: String,
-    #[sea_orm(column_type = "custom(\"enum_text\")")]
     pub status: String,
 }
 
