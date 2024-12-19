@@ -1,11 +1,14 @@
+use crate::db::store_file;
 use crate::drive::{download, get_file_path, list_google_drive};
 use google_drive::types::File;
-use ratatui::prelude::{Buffer, Constraint, Rect, StatefulWidget, Style, Stylize, Widget};
-use ratatui::widgets::{Block, HighlightSpacing, Row, Table, TableState};
+use ratatui::prelude::{Alignment, Buffer, Color, Constraint, Layout, Line, Modifier, Rect, StatefulWidget, Style, Stylize, Widget};
+use ratatui::widgets::{Block, Borders, HighlightSpacing, Padding, Paragraph, Row, Table, TableState, Wrap};
 use std::io::Cursor;
 use std::sync::{Arc, RwLock};
+use ratatui::style::palette::material::{BLUE, GREEN};
+use ratatui::style::palette::tailwind::SLATE;
+use ratatui::symbols;
 use zip::ZipArchive;
-use crate::db::{store_file};
 
 /// A widget that displays a list of pull requests.
 ///
@@ -38,6 +41,12 @@ enum LoadingState {
     Processing,
     Error(String),
 }
+const TODO_HEADER_STYLE: Style = Style::new().fg(SLATE.c100).bg(BLUE.c800);
+const NORMAL_ROW_BG: Color = SLATE.c950;
+const ALT_ROW_BG_COLOR: Color = SLATE.c900;
+const SELECTED_STYLE: Style = Style::new().bg(SLATE.c800).add_modifier(Modifier::BOLD);
+const TEXT_FG_COLOR: Color = SLATE.c200;
+const COMPLETED_TEXT_FG_COLOR: Color = GREEN.c500;
 
 impl FileListWidget {
     /// Start fetching the pull requests in the background.
@@ -62,7 +71,9 @@ impl FileListWidget {
         for (i, file) in files.iter().enumerate() {
             if let DriveItem::File(_, name) = file {
                 self.update_file_progress(&format!("Storing: {}", name), i as f64 / len as f64);
-                store_file(file.clone()).await.expect("Failed to store file");
+                store_file(file.clone())
+                    .await
+                    .expect("Failed to store file");
             }
         }
         self.set_loading_state(LoadingState::Idle);
@@ -200,6 +211,75 @@ impl FileListWidget {
         self.set_loading_state(LoadingState::Idle);
         Ok(())
     }
+    
+    fn render_status(&mut self, area: Rect, buf: &mut Buffer) {
+        let state = self.state.read().unwrap();
+        let info = if state.loading_state == LoadingState::Downloading {
+            format!(
+                "Downloading: {}, {:.2}%",
+                state.file_name,
+                state.progress * 100.0
+            )
+        } else if state.loading_state == LoadingState::Processing {
+            format!(
+                "Processing: {}, {:.2}%",
+                state.file_name,
+                state.progress * 100.0
+            )
+        } else {
+            format!("Status: {:?}", state.loading_state)
+        };
+        // We show the list item's info under the list in this paragraph
+        let block = Block::new()
+            .title(Line::raw("Status").centered())
+            .borders(Borders::TOP)
+            .border_set(symbols::border::EMPTY)
+            .border_style(TODO_HEADER_STYLE)
+            .bg(NORMAL_ROW_BG)
+            .padding(Padding::horizontal(1));
+
+        // We can now render the status
+        Paragraph::new(info)
+            .block(block)
+            .fg(TEXT_FG_COLOR)
+            .wrap(Wrap { trim: false })
+            .render(area, buf);
+    }
+
+    fn render_list(&mut self, area: Rect, buf: &mut Buffer) {
+        let mut state = self.state.write().unwrap();
+
+        // // a block with a right aligned title with the loading state on the right
+        let mut block = Block::bordered()
+            .title("File Id")
+            .title("File Name")
+            .title("Folder?")
+            .title_alignment(Alignment::Center);
+
+        if let Some(folder) = &state.current_folder {
+            let folder_name = match folder {
+                DriveItem::Folder(_, name) => name,
+                _ => "",
+            };
+            block = block.title_top(format!("Files in: {}", folder_name));
+        }
+
+        // a table with the list of pull requests
+        let rows = state.files.iter();
+        let widths = [
+            Constraint::Percentage(25),
+            Constraint::Percentage(70),
+            Constraint::Percentage(5),
+        ];
+        let table = Table::new(rows, widths)
+            .block(block)
+            .highlight_spacing(HighlightSpacing::Always)
+            .highlight_symbol(">>")
+            .row_highlight_style(SELECTED_STYLE);
+
+        StatefulWidget::render(table, area, buf, &mut state.table_state);
+    }
+
 }
 
 /*
@@ -224,58 +304,41 @@ impl FileListWidget {
            std::io::copy(&mut file, &mut outfile)?;
        }
 */
-impl Widget for &FileListWidget {
+
+
+
+impl Widget for &mut FileListWidget {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let mut state = self.state.write().unwrap();
+        let [header_area, main_area, footer_area] = Layout::vertical([
+            Constraint::Length(2),
+            Constraint::Fill(1),
+            Constraint::Length(1),
+        ])
+        .areas(area);
 
-        // // a block with a right aligned title with the loading state on the right
-        let mut block = Block::bordered()
-            .title("File Id")
-            .title("File Name")
-            .title("Folder?")
-            .title_bottom("j/k to scroll, enter to select / process, s to save to db, q to quit");
+        let [list_area, status_area] =
+            Layout::vertical([Constraint::Fill(1), 
+                Constraint::Length(3)])
+                .areas(main_area);
 
-        if state.loading_state == LoadingState::Downloading {
-            let progress = format!(
-                "Downloading: {}, {:.2}%",
-                state.file_name,
-                state.progress * 100.0
-            );
-            block = block.title_bottom(progress);
-        }
-
-        if state.loading_state == LoadingState::Processing {
-            let progress = format!(
-                "Processing: {}, {:.2}%",
-                state.file_name,
-                state.progress * 100.0
-            );
-            block = block.title_bottom(progress);
-        }
-
-        if let Some(folder) = &state.current_folder {
-            let folder_name = match folder {
-                DriveItem::Folder(_, name) => name,
-                _ => "",
-            };
-            block = block.title_top(format!("Files in: {}", folder_name));
-        }
-
-        // a table with the list of pull requests
-        let rows = state.files.iter();
-        let widths = [
-            Constraint::Percentage(25),
-            Constraint::Percentage(70),
-            Constraint::Percentage(5),
-        ];
-        let table = Table::new(rows, widths)
-            .block(block)
-            .highlight_spacing(HighlightSpacing::Always)
-            .highlight_symbol(">>")
-            .row_highlight_style(Style::new().on_blue());
-
-        StatefulWidget::render(table, area, buf, &mut state.table_state);
+        render_header(header_area, buf);
+        render_footer(footer_area, buf);
+        self.render_list(list_area, buf);
+        self.render_status(status_area, buf);
     }
+}
+
+fn render_footer(area: Rect, buf: &mut Buffer) {
+    Paragraph::new("Use ↓↑ to move, Enter to select, s to store to db\n, p to start processing, q to quit")
+        .centered()
+        .render(area, buf);
+}
+
+fn render_header(area: Rect, buf: &mut Buffer) {
+    Paragraph::new("Takeout Fixer")
+        .bold()
+        .centered()
+        .render(area, buf);
 }
 
 #[derive(Debug, Clone)]

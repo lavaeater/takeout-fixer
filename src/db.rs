@@ -31,7 +31,7 @@ pub fn get_model(file: DriveItem) -> anyhow::Result<takeout_zip::ActiveModel> {
 
 pub async fn store_file(file: DriveItem) -> anyhow::Result<()> {
     let conn = get_db_connection().await?;
-    let _takeout_zip = get_model(file)?.insert(&conn).await?;
+    let _takeout_zip = get_model(file)?.insert(&conn).await;
     Ok(())
 }
 
