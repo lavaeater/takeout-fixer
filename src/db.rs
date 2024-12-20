@@ -1,7 +1,8 @@
 use crate::widgets::DriveItem;
 use entity::takeout_zip;
 use sea_orm::ActiveValue::Set;
-use sea_orm::{ActiveModelTrait, DatabaseConnection};
+use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait};
+use entity::prelude::TakeoutZip;
 
 pub fn get_db_url() -> String {
     dotenv::var("DATABASE_URL").unwrap_or("sqlite::memory:".to_string())
@@ -33,6 +34,12 @@ pub async fn store_file(file: DriveItem) -> anyhow::Result<()> {
     let conn = get_db_connection().await?;
     let _takeout_zip = get_model(file)?.insert(&conn).await;
     Ok(())
+}
+
+pub async fn list_takeouts() -> anyhow::Result<Vec<TakeoutZip>> {
+    let conn = get_db_connection().await?;
+    let takeouts = takeout_zip::Entity::find().all(&conn).await?;
+    Ok(takeouts)
 }
 
 #[allow(dead_code)]

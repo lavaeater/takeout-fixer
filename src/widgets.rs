@@ -1,11 +1,13 @@
-use crate::db::store_file;
+use crate::db::{list_takeouts, store_file};
 use crate::drive::{download, get_file_path, list_google_drive};
+use takeout_zip::Model as TakeoutZip;
+use entity::takeout_zip;
 use google_drive::types::File;
 use ratatui::prelude::{
     Alignment, Buffer, Color, Constraint, Layout, Line, Modifier, Rect, StatefulWidget, Style,
     Stylize, Widget,
 };
-use ratatui::style::palette::material::{BLUE};
+use ratatui::style::palette::material::BLUE;
 use ratatui::style::palette::tailwind::SLATE;
 use ratatui::symbols;
 use ratatui::widgets::{
@@ -15,12 +17,6 @@ use std::io::Cursor;
 use std::sync::{Arc, RwLock};
 use zip::ZipArchive;
 
-/// A widget that displays a list of pull requests.
-///
-/// This is an async widget that fetches the list of pull requests from the GitHub API. It contains
-/// an inner `Arc<RwLock<PullRequestListState>>` that holds the state of the widget. Cloning the
-/// widget will clone the Arc, so you can pass it around to other threads, and this is used to spawn
-/// a background task to fetch the pull requests.
 #[derive(Debug, Clone, Default)]
 pub struct FileListWidget {
     state: Arc<RwLock<FileListState>>,
@@ -29,6 +25,7 @@ pub struct FileListWidget {
 #[derive(Debug, Default)]
 pub struct FileListState {
     files: Vec<DriveItem>,
+    zip_files: Vec<takeout_zip::Model>,
     loading_state: LoadingState,
     view_state: FileListWidgetViewState,
     table_state: TableState,
@@ -69,6 +66,30 @@ impl FileListWidget {
         tokio::spawn(this.fetch_files_in_folder(folder));
     }
 
+    async fn fetch_files_in_folder(self, folder: Option<DriveItem>) {
+        // this runs once, but you could also run this in a loop, using a channel that accepts
+        // messages to refresh on demand, or with an interval timer to refresh every N seconds
+        self.set_loading_state(LoadingState::Loading);
+        self.set_current_folder(folder.clone());
+        match list_google_drive(folder).await {
+            Ok(files) => self.on_load(&files),
+            Err(err) => self.on_err(&err),
+        }
+    }
+
+    pub fn list_takeouts(&self) {
+        let this = self.clone();
+        tokio::spawn(this.fetch_takeouts());
+    }
+
+    async fn fetch_takeouts(self) {
+        self.set_loading_state(LoadingState::Loading);
+        match list_takeouts().await {
+            Ok(takeouts) => self.on_fetch_takeouts(&takeouts),
+            Err(err) => self.on_err(&err),
+        }
+    }
+
     pub fn store_files(&self) {
         let this = self.clone();
         if let Ok(state) = self.state.read() {
@@ -78,9 +99,11 @@ impl FileListWidget {
 
     pub fn show_processing(&self) {
         self.set_view_state(FileListWidgetViewState::Processing);
+        self.list_takeouts();
     }
     pub fn show_files(&self) {
         self.set_view_state(FileListWidgetViewState::Files);
+        self.list_files(self.state.read().unwrap().current_folder.clone());
     }
 
     async fn store_files_in_db(self, files: Vec<DriveItem>) {
@@ -97,18 +120,7 @@ impl FileListWidget {
         self.set_loading_state(LoadingState::Idle);
     }
 
-    async fn fetch_files_in_folder(self, folder: Option<DriveItem>) {
-        // this runs once, but you could also run this in a loop, using a channel that accepts
-        // messages to refresh on demand, or with an interval timer to refresh every N seconds
-        self.set_loading_state(LoadingState::Loading);
-        self.set_current_folder(folder.clone());
-        match list_google_drive(folder).await {
-            Ok(files) => self.on_load(&files),
-            Err(err) => self.on_err(&err),
-        }
-    }
-
-    fn on_load(&self, files: &Vec<File>) {
+    fn on_load(&self, files: &[File]) {
         let mut all_files: Vec<DriveItem> = files.iter().map(Into::into).collect();
         all_files.sort_by(|a, b| match (a, b) {
             (DriveItem::Folder { .. }, DriveItem::File { .. }) => std::cmp::Ordering::Less,
@@ -126,6 +138,17 @@ impl FileListWidget {
         if !state.files.is_empty() {
             state.table_state.select(Some(0));
         }
+    }
+
+    fn on_fetch_takeouts(&self, takeouts: &[TakeoutZip]) {
+        let mut state = self.state.write().unwrap();
+
+        state.zip_files.clear();
+        state.zip_files.extend(takeouts.to_vec());
+        if !state.zip_files.is_empty() {
+            state.table_state.select(Some(0));
+        }
+        state.loading_state = LoadingState::Loaded;
     }
 
     fn on_err(&self, err: &anyhow::Error) {
@@ -285,7 +308,7 @@ impl FileListWidget {
         }
 
         // a table with the list of db zip files
-        let rows = state.files.iter();
+        let rows = state.zip_files.iter();
         let widths = [
             Constraint::Percentage(25),
             Constraint::Percentage(70),
@@ -340,7 +363,7 @@ impl FileListWidget {
             Constraint::Fill(1),
             Constraint::Length(1),
         ])
-            .areas(area);
+        .areas(area);
 
         let [list_area, status_area] =
             Layout::vertical([Constraint::Fill(1), Constraint::Length(3)]).areas(main_area);
@@ -392,9 +415,7 @@ fn render_file_footer(area: Rect, buf: &mut Buffer) {
 }
 
 fn render_processing_footer(area: Rect, buf: &mut Buffer) {
-    Paragraph::new(
-        "Use ↓↑ to move, Enter to select, s to store to db\n, f for files, q to quit",
-    )
+    Paragraph::new("Use ↓↑ to move, Enter to select, s to store to db\n, f for files, q to quit")
         .centered()
         .render(area, buf);
 }
