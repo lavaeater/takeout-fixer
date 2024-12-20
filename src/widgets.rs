@@ -1,6 +1,8 @@
 use crate::db::{list_takeouts, store_file, update_takeout_zip};
 use crate::drive::{download, get_file_path, list_google_drive};
 use entity::takeout_zip;
+use entity::takeout_zip::Model;
+use futures::stream::FuturesUnordered;
 use google_drive::types::File;
 use ratatui::prelude::{
     Alignment, Buffer, Color, Constraint, Layout, Line, Modifier, Rect, StatefulWidget, Style,
@@ -16,9 +18,12 @@ use sea_orm::IntoActiveModel;
 use std::fmt::Debug;
 use std::io::Cursor;
 use std::sync::{Arc, RwLock};
+use futures::StreamExt;
+use tokio::io::AsyncWriteExt;
 use takeout_zip::Model as TakeoutZip;
+use tokio::sync::mpsc;
+use tokio::task;
 use zip::ZipArchive;
-use entity::takeout_zip::Model;
 
 #[derive(Debug, Clone)]
 pub struct FileListWidget {
@@ -78,6 +83,24 @@ pub enum UiActions {
     SelectItem,
     SwitchView,
     Quit,
+}
+
+async fn download_to_disk_with_progress(file_item: DriveItem) -> anyhow::Result<()> {
+    if let DriveItem::File(id, name) = file_item {
+        let mut response = download(id).await?;
+        let size = response.content_length().unwrap_or_default();
+        let mut written = usize::default();
+        let mut async_file = tokio::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(get_file_path(&name)).await?;
+        while let Some(chunk) = response.chunk().await? {
+            written += async_file.write(chunk.as_ref()).await?;
+            // self.update_file_progress(&name, written as f64 / size as f64);
+        }
+    }
+    Ok(())
 }
 
 impl FileListWidget {
@@ -264,22 +287,59 @@ impl FileListWidget {
         contain 100% matching pairs of jsons and images... not sure though.
          */
         let this = self.clone();
-        tokio::spawn(this.process_zips());
-    }
-    
-    pub fn get_next_zip_to_process(&self) -> Option<Model> {
-        let state = self.state.read().unwrap();
-        state.zip_files.iter().find(|zip| {zip.status == "new"}).cloned()
+        tokio::spawn(this.start_processing_pipeline());
     }
 
-    async fn process_zips(self) {
+    pub fn get_next_zip_to_process(&self) -> Option<Model> {
+        let state = self.state.read().unwrap();
+        state
+            .zip_files
+            .iter()
+            .find(|zip| zip.status == "new")
+            .cloned()
+    }
+
+    pub fn get_zips_to_process(&self) -> Vec<Model> {
+        let state = self.state.read().unwrap();
+        state
+            .zip_files
+            .iter()
+            .filter(|zip| zip.status == "new")
+            .cloned()
+            .collect()
+    }
+
+    async fn start_processing_pipeline(self) {
         self.set_loading_state(LoadingState::Processing);
-        if let Some(zip_to_process) = self.get_next_zip_to_process() {
-            let mut ugh = zip_to_process.into_active_model();
-            ugh.status.set_if_not_equals("downloading".into());
-            let _zip_to_process = update_takeout_zip(ugh).await.expect("GFaraf");
-            self.fetch_takeout_zips().await;
-        }
+        let (tx, mut rx) = mpsc::channel::<TakeoutZip>(500);
+
+        let download_task_pipe = task::spawn(async move {
+            let mut download_tasks = FuturesUnordered::new();
+
+            // Feed items to the pipeline
+            for zip in self.get_zips_to_process() {
+                let sender = tx.clone();
+                download_tasks.push(async move {
+                    if download_to_disk_with_progress(DriveItem::File(zip.drive_id.clone(), zip.name.clone()))
+                        .await.is_ok() {
+                        sender.send(zip).await.unwrap();
+                    }
+                });
+            }
+
+            // Process download tasks concurrently
+            while download_tasks.next().await.is_some() {}
+            drop(tx); // Close channel when all downloads are done
+        });
+
+        let _ = tokio::join!(download_task_pipe);
+
+        // if let Some(zip_to_process) = self.get_next_zip_to_process() {
+        //     let mut ugh = zip_to_process.into_active_model();
+        //     ugh.status.set_if_not_equals("downloading".into());
+        //     let _zip_to_process = update_takeout_zip(ugh).await.expect("GFaraf");
+        //     self.fetch_takeout_zips().await;
+        // }
     }
 
     pub fn process_file(&self) {
@@ -461,7 +521,7 @@ impl FileListWidget {
             Constraint::Fill(1),
             Constraint::Length(1),
         ])
-            .areas(area);
+        .areas(area);
 
         let [list_area, status_area] =
             Layout::vertical([Constraint::Fill(1), Constraint::Length(3)]).areas(main_area);
@@ -478,7 +538,7 @@ impl FileListWidget {
             Constraint::Fill(1),
             Constraint::Length(1),
         ])
-            .areas(area);
+        .areas(area);
 
         let [list_area, status_area] =
             Layout::vertical([Constraint::Fill(1), Constraint::Length(3)]).areas(main_area);
@@ -508,8 +568,8 @@ fn render_file_footer(area: Rect, buf: &mut Buffer) {
     Paragraph::new(
         "Use ↓↑ to move, Enter to select, s to store to db\n, p for processing, q to quit",
     )
-        .centered()
-        .render(area, buf);
+    .centered()
+    .render(area, buf);
 }
 
 fn render_processing_footer(area: Rect, buf: &mut Buffer) {
