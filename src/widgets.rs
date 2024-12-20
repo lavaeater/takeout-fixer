@@ -1,5 +1,4 @@
-use std::fmt::Debug;
-use crate::db::{list_takeouts, store_file};
+use crate::db::{list_takeouts, store_file, update_takeout_zip};
 use crate::drive::{download, get_file_path, list_google_drive};
 use entity::takeout_zip;
 use google_drive::types::File;
@@ -13,10 +12,14 @@ use ratatui::symbols;
 use ratatui::widgets::{
     Block, Borders, HighlightSpacing, Padding, Paragraph, Row, Table, TableState, Wrap,
 };
+use sea_orm::IntoActiveModel;
+use std::fmt::Debug;
+use std::future::Future;
 use std::io::Cursor;
 use std::sync::{Arc, RwLock};
 use takeout_zip::Model as TakeoutZip;
 use zip::ZipArchive;
+use entity::takeout_zip::Model;
 
 #[derive(Debug, Clone)]
 pub struct FileListWidget {
@@ -36,7 +39,7 @@ impl Default for FileListWidget {
 #[derive(Debug, Default)]
 pub struct FileListState {
     files: Vec<DriveItem>,
-    zip_files: Vec<takeout_zip::Model>,
+    zip_files: Vec<TakeoutZip>,
     loading_state: LoadingState,
     view_state: FileListWidgetViewState,
     table_state: TableState,
@@ -99,12 +102,12 @@ impl FileListWidget {
         }
     }
 
-    pub fn list_takeouts(&self) {
+    pub fn list_takeout_zips(&self) {
         let this = self.clone();
-        tokio::spawn(this.fetch_takeouts());
+        tokio::spawn(this.fetch_takeout_zips());
     }
 
-    async fn fetch_takeouts(self) {
+    async fn fetch_takeout_zips(self) {
         self.set_loading_state(LoadingState::Loading);
         match list_takeouts().await {
             Ok(takeouts) => self.on_fetch_takeouts(&takeouts),
@@ -152,14 +155,14 @@ impl FileListWidget {
             tokio::spawn(this.store_files_in_db(state.files.clone()));
         }
     }
-    
+
     pub fn quit(&mut self) {
         self.is_running = false;
     }
 
     pub fn show_processing(&self) {
         self.set_view_state(FileListWidgetViewState::Processing);
-        self.list_takeouts();
+        self.list_takeout_zips();
     }
 
     pub fn show_files(&self) {
@@ -261,6 +264,23 @@ impl FileListWidget {
         I am just assuming here but I think that the zip files not necessarily
         contain 100% matching pairs of jsons and images... not sure though.
          */
+        let this = self.clone();
+        tokio::spawn(this.process_zips());
+    }
+    
+    pub fn get_next_zip_to_process(&self) -> Option<Model> {
+        let state = self.state.read().unwrap();
+        let z =  state.zip_files.iter().find(|zip| {zip.status == "new"});
+        z.cloned()
+    }
+
+    async fn process_zips(self) {
+        self.set_loading_state(LoadingState::Processing);
+        if let Some(zip_to_process) = self.get_next_zip_to_process() {
+            let mut ugh = zip_to_process.into_active_model();
+            ugh.status.set_if_not_equals("downloading".into());
+            let zip_to_process = update_takeout_zip(ugh).await.expect("GFaraf");
+        }
     }
 
     pub fn process_file(&self) {
@@ -442,7 +462,7 @@ impl FileListWidget {
             Constraint::Fill(1),
             Constraint::Length(1),
         ])
-        .areas(area);
+            .areas(area);
 
         let [list_area, status_area] =
             Layout::vertical([Constraint::Fill(1), Constraint::Length(3)]).areas(main_area);
@@ -459,7 +479,7 @@ impl FileListWidget {
             Constraint::Fill(1),
             Constraint::Length(1),
         ])
-        .areas(area);
+            .areas(area);
 
         let [list_area, status_area] =
             Layout::vertical([Constraint::Fill(1), Constraint::Length(3)]).areas(main_area);
@@ -489,8 +509,8 @@ fn render_file_footer(area: Rect, buf: &mut Buffer) {
     Paragraph::new(
         "Use ↓↑ to move, Enter to select, s to store to db\n, p for processing, q to quit",
     )
-    .centered()
-    .render(area, buf);
+        .centered()
+        .render(area, buf);
 }
 
 fn render_processing_footer(area: Rect, buf: &mut Buffer) {

@@ -1,8 +1,8 @@
 use crate::widgets::DriveItem;
 use entity::takeout_zip;
-use sea_orm::ActiveValue::Set;
-use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait};
 use entity::takeout_zip::Model as TakeoutZip;
+use sea_orm::ActiveValue::Set;
+use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait, IntoActiveModel};
 
 pub fn get_db_url() -> String {
     dotenv::var("DATABASE_URL").unwrap_or("sqlite::memory:".to_string())
@@ -38,8 +38,12 @@ pub async fn store_file(file: DriveItem) -> anyhow::Result<()> {
 
 pub async fn list_takeouts() -> anyhow::Result<Vec<TakeoutZip>> {
     let conn = get_db_connection().await?;
-    let takeouts = takeout_zip::Entity::find().all(&conn).await?;
-    Ok(takeouts)
+    Ok(takeout_zip::Entity::find().all(&conn).await?)
+}
+
+pub async fn update_takeout_zip(model: takeout_zip::ActiveModel) -> anyhow::Result<TakeoutZip> {
+    let conn = get_db_connection().await?;
+    Ok(model.update(&conn).await?)
 }
 
 #[allow(dead_code)]
@@ -47,7 +51,7 @@ pub async fn store_files(files: Vec<DriveItem>) -> anyhow::Result<()> {
     let conn = get_db_connection().await?;
     for file in files {
         if let DriveItem::File(_, _) = file {
-            let _takeout_zip = get_model(file)?.insert(&conn).await?;                
+            let _takeout_zip = get_model(file)?.insert(&conn).await?;
         }
     }
     Ok(())
