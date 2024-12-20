@@ -15,9 +15,9 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
                 app.quit();
             }
         }
-        KeyCode::Char('l') | KeyCode::Char('L') => {
-            app.file_list_widget.list_files(None);
-        }
+        // KeyCode::Char('l') | KeyCode::Char('L') => {
+        //     app.file_list_widget.list_files(None);
+        // }
         KeyCode::Up => {
             app.file_list_widget.scroll_up();
         }
@@ -27,11 +27,8 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
         KeyCode::Char('s') | KeyCode::Char('S') => {
             app.file_list_widget.handle_action(UiActions::StartProcessing);
         }
-        KeyCode::Char('p') | KeyCode::Char('P') => {
-            app.file_list_widget.show_processing();
-        }
-        KeyCode::Char('f') | KeyCode::Char('F') => {
-            app.file_list_widget.show_files();
+        KeyCode::Char('v') | KeyCode::Char('V') => {
+            app.file_list_widget.handle_action(UiActions::SwitchView);
         }
         // Other handlers you could add here.
         _ => {}

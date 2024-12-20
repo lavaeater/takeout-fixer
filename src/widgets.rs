@@ -59,13 +59,11 @@ const TEXT_FG_COLOR: Color = SLATE.c200;
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum UiActions {
     StartProcessing,
-    StoreFiles,
     ScrollDown,
     ScrollUp,
     #[default]
     SelectItem,
-    ShowProcessing,
-    ShowFiles,
+    SwitchView,
 }
 
 impl FileListWidget {
@@ -110,12 +108,12 @@ impl FileListWidget {
                     UiActions::StartProcessing => {
                         self.store_files();
                     }
-                    UiActions::StoreFiles => {}
                     UiActions::ScrollDown => {}
                     UiActions::ScrollUp => {}
                     UiActions::SelectItem => {}
-                    UiActions::ShowProcessing => {}
-                    UiActions::ShowFiles => {}
+                    UiActions::SwitchView => {
+                        self.show_processing();
+                    }
                 }
             }
             FileListWidgetViewState::Processing => {
@@ -123,12 +121,12 @@ impl FileListWidget {
                     UiActions::StartProcessing => {
                         self.start_processing();
                     }
-                    UiActions::StoreFiles => {}
                     UiActions::ScrollDown => {}
                     UiActions::ScrollUp => {}
                     UiActions::SelectItem => {}
-                    UiActions::ShowProcessing => {}
-                    UiActions::ShowFiles => {}
+                    UiActions::SwitchView => {
+                        self.show_files();
+                    }
                 }
             }
         }
