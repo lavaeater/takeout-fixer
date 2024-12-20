@@ -3,15 +3,14 @@
 use sea_orm::entity::prelude::*;
 
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Eq)]
-#[sea_orm(table_name = "takeout_zip")]
+#[sea_orm(table_name = "file_in_zip")]
 pub struct Model {
     #[sea_orm(primary_key)]
     pub id: i32,
-    #[sea_orm(unique)]
-    pub drive_id: String,
     pub name: String,
-    pub local_path: String,
+    pub path: String,
     pub status: String,
+    pub log: Json,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

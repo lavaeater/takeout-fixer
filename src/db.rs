@@ -2,7 +2,7 @@ use crate::widgets::DriveItem;
 use entity::takeout_zip;
 use sea_orm::ActiveValue::Set;
 use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait};
-use entity::prelude::TakeoutZip;
+use entity::takeout_zip::Model as TakeoutZip;
 
 pub fn get_db_url() -> String {
     dotenv::var("DATABASE_URL").unwrap_or("sqlite::memory:".to_string())
