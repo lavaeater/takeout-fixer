@@ -1,13 +1,18 @@
 use crate::db::store_file;
 use crate::drive::{download, get_file_path, list_google_drive};
 use google_drive::types::File;
-use ratatui::prelude::{Alignment, Buffer, Color, Constraint, Layout, Line, Modifier, Rect, StatefulWidget, Style, Stylize, Widget};
-use ratatui::widgets::{Block, Borders, HighlightSpacing, Padding, Paragraph, Row, Table, TableState, Wrap};
-use std::io::Cursor;
-use std::sync::{Arc, RwLock};
-use ratatui::style::palette::material::{BLUE, GREEN};
+use ratatui::prelude::{
+    Alignment, Buffer, Color, Constraint, Layout, Line, Modifier, Rect, StatefulWidget, Style,
+    Stylize, Widget,
+};
+use ratatui::style::palette::material::{BLUE};
 use ratatui::style::palette::tailwind::SLATE;
 use ratatui::symbols;
+use ratatui::widgets::{
+    Block, Borders, HighlightSpacing, Padding, Paragraph, Row, Table, TableState, Wrap,
+};
+use std::io::Cursor;
+use std::sync::{Arc, RwLock};
 use zip::ZipArchive;
 
 /// A widget that displays a list of pull requests.
@@ -25,6 +30,7 @@ pub struct FileListWidget {
 pub struct FileListState {
     files: Vec<DriveItem>,
     loading_state: LoadingState,
+    view_state: FileListWidgetViewState,
     table_state: TableState,
     progress: f64,
     file_name: String,
@@ -41,12 +47,17 @@ enum LoadingState {
     Processing,
     Error(String),
 }
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+enum FileListWidgetViewState {
+    #[default]
+    Files,
+    Processing,
+}
 const TODO_HEADER_STYLE: Style = Style::new().fg(SLATE.c100).bg(BLUE.c800);
 const NORMAL_ROW_BG: Color = SLATE.c950;
-const ALT_ROW_BG_COLOR: Color = SLATE.c900;
 const SELECTED_STYLE: Style = Style::new().bg(SLATE.c800).add_modifier(Modifier::BOLD);
 const TEXT_FG_COLOR: Color = SLATE.c200;
-const COMPLETED_TEXT_FG_COLOR: Color = GREEN.c500;
 
 impl FileListWidget {
     /// Start fetching the pull requests in the background.
@@ -63,6 +74,13 @@ impl FileListWidget {
         if let Ok(state) = self.state.read() {
             tokio::spawn(this.store_files_in_db(state.files.clone()));
         }
+    }
+
+    pub fn show_processing(&self) {
+        self.set_view_state(FileListWidgetViewState::Processing);
+    }
+    pub fn show_files(&self) {
+        self.set_view_state(FileListWidgetViewState::Files);
     }
 
     async fn store_files_in_db(self, files: Vec<DriveItem>) {
@@ -116,6 +134,10 @@ impl FileListWidget {
 
     fn set_loading_state(&self, state: LoadingState) {
         self.state.write().unwrap().loading_state = state;
+    }
+
+    fn set_view_state(&self, state: FileListWidgetViewState) {
+        self.state.write().unwrap().view_state = state;
     }
 
     fn set_current_folder(&self, folder: Option<DriveItem>) {
@@ -211,7 +233,7 @@ impl FileListWidget {
         self.set_loading_state(LoadingState::Idle);
         Ok(())
     }
-    
+
     fn render_status(&mut self, area: Rect, buf: &mut Buffer) {
         let state = self.state.read().unwrap();
         let info = if state.loading_state == LoadingState::Downloading {
@@ -246,7 +268,39 @@ impl FileListWidget {
             .render(area, buf);
     }
 
-    fn render_list(&mut self, area: Rect, buf: &mut Buffer) {
+    fn render_processing_area(&mut self, area: Rect, buf: &mut Buffer) {
+        let mut state = self.state.write().unwrap();
+
+        // // a block with a right aligned title with the loading state on the right
+        let mut block = Block::bordered()
+            .title("Jobs, brah")
+            .title_alignment(Alignment::Center);
+
+        if let Some(folder) = &state.current_folder {
+            let folder_name = match folder {
+                DriveItem::Folder(_, name) => name,
+                _ => "",
+            };
+            block = block.title_top(format!("Files in: {}", folder_name));
+        }
+
+        // a table with the list of db zip files
+        let rows = state.files.iter();
+        let widths = [
+            Constraint::Percentage(25),
+            Constraint::Percentage(70),
+            Constraint::Percentage(5),
+        ];
+        let table = Table::new(rows, widths)
+            .block(block)
+            .highlight_spacing(HighlightSpacing::Always)
+            .highlight_symbol(">>")
+            .row_highlight_style(SELECTED_STYLE);
+
+        StatefulWidget::render(table, area, buf, &mut state.table_state);
+    }
+
+    fn render_file_list_area(&mut self, area: Rect, buf: &mut Buffer) {
         let mut state = self.state.write().unwrap();
 
         // // a block with a right aligned title with the loading state on the right
@@ -280,35 +334,24 @@ impl FileListWidget {
         StatefulWidget::render(table, area, buf, &mut state.table_state);
     }
 
-}
+    pub fn render_processing_view(&mut self, area: Rect, buf: &mut Buffer) {
+        let [header_area, main_area, footer_area] = Layout::vertical([
+            Constraint::Length(2),
+            Constraint::Fill(1),
+            Constraint::Length(1),
+        ])
+            .areas(area);
 
-/*
-   let mut archive = ZipArchive::new(f).expect("Could not open");
-   for i in 0..archive.len() {
-       let mut file = archive.by_index(i)?;
-       let outpath = match file.enclosed_name() {
-           Some(path) => path,
-           None => continue,
-       };
-       let outpath = target_folder.clone().join(outpath);
+        let [list_area, status_area] =
+            Layout::vertical([Constraint::Fill(1), Constraint::Length(3)]).areas(main_area);
 
-       if file.is_dir() {
-           std::fs::create_dir_all(&outpath)?;
-       } else {
-           if let Some(p) = outpath.parent() {
-               if !p.exists() {
-                   std::fs::create_dir_all(p)?;
-               }
-           }
-           let mut outfile = std::fs::File::create(&outpath)?;
-           std::io::copy(&mut file, &mut outfile)?;
-       }
-*/
+        render_header(header_area, buf);
+        render_processing_footer(footer_area, buf);
+        self.render_processing_area(list_area, buf);
+        self.render_status(status_area, buf);
+    }
 
-
-
-impl Widget for &mut FileListWidget {
-    fn render(self, area: Rect, buf: &mut Buffer) {
+    pub fn render_file_view(&mut self, area: Rect, buf: &mut Buffer) {
         let [header_area, main_area, footer_area] = Layout::vertical([
             Constraint::Length(2),
             Constraint::Fill(1),
@@ -317,19 +360,41 @@ impl Widget for &mut FileListWidget {
         .areas(area);
 
         let [list_area, status_area] =
-            Layout::vertical([Constraint::Fill(1), 
-                Constraint::Length(3)])
-                .areas(main_area);
+            Layout::vertical([Constraint::Fill(1), Constraint::Length(3)]).areas(main_area);
 
         render_header(header_area, buf);
-        render_footer(footer_area, buf);
-        self.render_list(list_area, buf);
+        render_file_footer(footer_area, buf);
+        self.render_file_list_area(list_area, buf);
         self.render_status(status_area, buf);
     }
 }
 
-fn render_footer(area: Rect, buf: &mut Buffer) {
-    Paragraph::new("Use ↓↑ to move, Enter to select, s to store to db\n, p to start processing, q to quit")
+impl Widget for &mut FileListWidget {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        let state = self.state.read().unwrap().view_state.clone();
+        match state {
+            FileListWidgetViewState::Files => {
+                self.render_file_view(area, buf);
+            }
+            FileListWidgetViewState::Processing => {
+                self.render_processing_view(area, buf);
+            }
+        }
+    }
+}
+
+fn render_file_footer(area: Rect, buf: &mut Buffer) {
+    Paragraph::new(
+        "Use ↓↑ to move, Enter to select, s to store to db\n, p for processing, q to quit",
+    )
+    .centered()
+    .render(area, buf);
+}
+
+fn render_processing_footer(area: Rect, buf: &mut Buffer) {
+    Paragraph::new(
+        "Use ↓↑ to move, Enter to select, s to store to db\n, f for files, q to quit",
+    )
         .centered()
         .render(area, buf);
 }

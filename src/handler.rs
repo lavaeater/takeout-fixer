@@ -29,6 +29,12 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
         KeyCode::Char('s') | KeyCode::Char('S') => {
             app.file_list_widget.store_files();
         }
+        KeyCode::Char('p') | KeyCode::Char('P') => {
+            app.file_list_widget.show_processing();
+        }
+        KeyCode::Char('f') | KeyCode::Char('F') => {
+            app.file_list_widget.show_files();
+        }
         // Other handlers you could add here.
         _ => {}
     }
