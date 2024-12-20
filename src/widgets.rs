@@ -227,6 +227,21 @@ impl FileListWidget {
     }
     
     pub fn start_processing(&self) {
+        /*
+        What does processing mean in this context?
+        Ideally we want this to
+        
+        1. Select a file from the DB that is status new
+        2. Download the file from the drive - status Downloading
+        3. When done, status changes to downloaded.
+        4. Examine the File, status ZipDiscover - all files will be entered into db
+        5. When done, status changes to ZipDiscovered
+        6. That file is now ready for step two of file processing.
+        7. Unzip all files that have a corresponding JSON file attached to them
+        - or for which there exists in the database a JSON file. 
+        I am just assuming here but I think that the zip files not necessarily
+        contain 100% matching pairs of jsons and images... not sure though.
+         */
     }
 
     pub fn process_file(&self) {
