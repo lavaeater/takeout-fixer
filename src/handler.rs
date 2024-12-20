@@ -7,22 +7,22 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
     match key_event.code {
         // Exit application on `ESC` or `q`
         KeyCode::Esc | KeyCode::Char('q') => {
-            app.quit();
+            app.file_list_widget.handle_action(UiActions::Quit);
         }
         // Exit application on `Ctrl-C`
         KeyCode::Char('c') | KeyCode::Char('C') => {
             if key_event.modifiers == KeyModifiers::CONTROL {
-                app.quit();
+                app.file_list_widget.handle_action(UiActions::Quit);
             }
         }
-        // KeyCode::Char('l') | KeyCode::Char('L') => {
-        //     app.file_list_widget.list_files(None);
-        // }
+        KeyCode::Enter => {
+            app.file_list_widget.handle_action(UiActions::SelectItem);
+        }
         KeyCode::Up => {
-            app.file_list_widget.scroll_up();
+            app.file_list_widget.handle_action(UiActions::ScrollUp);
         }
         KeyCode::Down => {
-            app.file_list_widget.scroll_down();
+            app.file_list_widget.handle_action(UiActions::ScrollDown);
         }
         KeyCode::Char('s') | KeyCode::Char('S') => {
             app.file_list_widget.handle_action(UiActions::StartProcessing);

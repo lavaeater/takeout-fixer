@@ -1,6 +1,6 @@
+use std::fmt::Debug;
 use crate::db::{list_takeouts, store_file};
 use crate::drive::{download, get_file_path, list_google_drive};
-use takeout_zip::Model as TakeoutZip;
 use entity::takeout_zip;
 use google_drive::types::File;
 use ratatui::prelude::{
@@ -15,11 +15,22 @@ use ratatui::widgets::{
 };
 use std::io::Cursor;
 use std::sync::{Arc, RwLock};
+use takeout_zip::Model as TakeoutZip;
 use zip::ZipArchive;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct FileListWidget {
+    pub is_running: bool,
     state: Arc<RwLock<FileListState>>,
+}
+
+impl Default for FileListWidget {
+    fn default() -> Self {
+        Self {
+            is_running: true,
+            state: Arc::new(RwLock::new(FileListState::default())),
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -64,6 +75,7 @@ pub enum UiActions {
     #[default]
     SelectItem,
     SwitchView,
+    Quit,
 }
 
 impl FileListWidget {
@@ -100,49 +112,56 @@ impl FileListWidget {
         }
     }
 
-    pub fn handle_action(&self, ui_action: UiActions) {
-        let state = self.state.read().unwrap();
-        match state.view_state {
-            FileListWidgetViewState::Files => {
-                match ui_action {
-                    UiActions::StartProcessing => {
-                        self.store_files();
-                    }
-                    UiActions::ScrollDown => {}
-                    UiActions::ScrollUp => {}
-                    UiActions::SelectItem => {}
-                    UiActions::SwitchView => {
-                        self.show_processing();
-                    }
+    pub fn handle_action(&mut self, ui_action: UiActions) {
+        let state = self.state.read().unwrap().view_state.clone();
+        match ui_action {
+            UiActions::StartProcessing => match state {
+                FileListWidgetViewState::Files => {
+                    self.store_files();
                 }
+                FileListWidgetViewState::Processing => {
+                    self.start_processing();
+                }
+            },
+            UiActions::ScrollDown => {
+                self.scroll_down();
             }
-            FileListWidgetViewState::Processing => {
-                match ui_action {
-                    UiActions::StartProcessing => {
-                        self.start_processing();
-                    }
-                    UiActions::ScrollDown => {}
-                    UiActions::ScrollUp => {}
-                    UiActions::SelectItem => {}
-                    UiActions::SwitchView => {
-                        self.show_files();
-                    }
+            UiActions::ScrollUp => {
+                self.scroll_up();
+            }
+            UiActions::SelectItem => {
+                self.process_file();
+            }
+            UiActions::SwitchView => match state {
+                FileListWidgetViewState::Files => {
+                    self.show_processing();
                 }
+                FileListWidgetViewState::Processing => {
+                    self.show_files();
+                }
+            },
+            UiActions::Quit => {
+                self.quit();
             }
         }
     }
-    
+
     pub fn store_files(&self) {
         let this = self.clone();
         if let Ok(state) = self.state.read() {
             tokio::spawn(this.store_files_in_db(state.files.clone()));
         }
     }
+    
+    pub fn quit(&mut self) {
+        self.is_running = false;
+    }
 
     pub fn show_processing(&self) {
         self.set_view_state(FileListWidgetViewState::Processing);
         self.list_takeouts();
     }
+
     pub fn show_files(&self) {
         self.set_view_state(FileListWidgetViewState::Files);
         self.list_files(self.state.read().unwrap().current_folder.clone());
@@ -225,12 +244,12 @@ impl FileListWidget {
     pub fn scroll_up(&self) {
         self.state.write().unwrap().table_state.scroll_up_by(1);
     }
-    
+
     pub fn start_processing(&self) {
         /*
         What does processing mean in this context?
         Ideally we want this to
-        
+
         1. Select a file from the DB that is status new
         2. Download the file from the drive - status Downloading
         3. When done, status changes to downloaded.
@@ -238,7 +257,7 @@ impl FileListWidget {
         5. When done, status changes to ZipDiscovered
         6. That file is now ready for step two of file processing.
         7. Unzip all files that have a corresponding JSON file attached to them
-        - or for which there exists in the database a JSON file. 
+        - or for which there exists in the database a JSON file.
         I am just assuming here but I think that the zip files not necessarily
         contain 100% matching pairs of jsons and images... not sure though.
          */
