@@ -56,6 +56,18 @@ const NORMAL_ROW_BG: Color = SLATE.c950;
 const SELECTED_STYLE: Style = Style::new().bg(SLATE.c800).add_modifier(Modifier::BOLD);
 const TEXT_FG_COLOR: Color = SLATE.c200;
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum UiActions {
+    StartProcessing,
+    StoreFiles,
+    ScrollDown,
+    ScrollUp,
+    #[default]
+    SelectItem,
+    ShowProcessing,
+    ShowFiles,
+}
+
 impl FileListWidget {
     /// Start fetching the pull requests in the background.
     ///
@@ -90,6 +102,38 @@ impl FileListWidget {
         }
     }
 
+    pub fn handle_action(&self, ui_action: UiActions) {
+        let state = self.state.read().unwrap();
+        match state.view_state {
+            FileListWidgetViewState::Files => {
+                match ui_action {
+                    UiActions::StartProcessing => {
+                        self.store_files();
+                    }
+                    UiActions::StoreFiles => {}
+                    UiActions::ScrollDown => {}
+                    UiActions::ScrollUp => {}
+                    UiActions::SelectItem => {}
+                    UiActions::ShowProcessing => {}
+                    UiActions::ShowFiles => {}
+                }
+            }
+            FileListWidgetViewState::Processing => {
+                match ui_action {
+                    UiActions::StartProcessing => {
+                        self.start_processing();
+                    }
+                    UiActions::StoreFiles => {}
+                    UiActions::ScrollDown => {}
+                    UiActions::ScrollUp => {}
+                    UiActions::SelectItem => {}
+                    UiActions::ShowProcessing => {}
+                    UiActions::ShowFiles => {}
+                }
+            }
+        }
+    }
+    
     pub fn store_files(&self) {
         let this = self.clone();
         if let Ok(state) = self.state.read() {
@@ -182,6 +226,9 @@ impl FileListWidget {
 
     pub fn scroll_up(&self) {
         self.state.write().unwrap().table_state.scroll_up_by(1);
+    }
+    
+    pub fn start_processing(&self) {
     }
 
     pub fn process_file(&self) {
