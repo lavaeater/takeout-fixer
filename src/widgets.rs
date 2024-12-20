@@ -14,7 +14,6 @@ use ratatui::widgets::{
 };
 use sea_orm::IntoActiveModel;
 use std::fmt::Debug;
-use std::future::Future;
 use std::io::Cursor;
 use std::sync::{Arc, RwLock};
 use takeout_zip::Model as TakeoutZip;
@@ -270,8 +269,7 @@ impl FileListWidget {
     
     pub fn get_next_zip_to_process(&self) -> Option<Model> {
         let state = self.state.read().unwrap();
-        let z =  state.zip_files.iter().find(|zip| {zip.status == "new"});
-        z.cloned()
+        state.zip_files.iter().find(|zip| {zip.status == "new"}).cloned()
     }
 
     async fn process_zips(self) {
@@ -279,7 +277,8 @@ impl FileListWidget {
         if let Some(zip_to_process) = self.get_next_zip_to_process() {
             let mut ugh = zip_to_process.into_active_model();
             ugh.status.set_if_not_equals("downloading".into());
-            let zip_to_process = update_takeout_zip(ugh).await.expect("GFaraf");
+            let _zip_to_process = update_takeout_zip(ugh).await.expect("GFaraf");
+            self.fetch_takeout_zips().await;
         }
     }
 
