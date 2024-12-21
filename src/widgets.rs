@@ -346,6 +346,7 @@ impl FileListWidget {
                     let this = self.clone();
 
                     task::spawn(async move {
+                        let later = this.clone();
                         match this
                             .examine_zip_with_progress(item.clone().try_into_model().unwrap())
                             .await
@@ -358,6 +359,7 @@ impl FileListWidget {
                             }
                         }
                         update_takeout_zip(item).await.unwrap();
+                        later.finish_examination();
                     });
                 }
             }
@@ -408,7 +410,6 @@ impl FileListWidget {
                 .await;
             }
         }
-        self.finish_examination();
         Ok(())
     }
 
