@@ -1,20 +1,37 @@
 use crate::widgets::DriveItem;
 use entity::takeout_zip;
-use entity::takeout_zip::Model as TakeoutZip;
+use entity::takeout_zip::{Column, Model as TakeoutZip, ActiveModel as TakeoutZipActiveModel};
 use sea_orm::ActiveValue::Set;
-use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait};
+use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, IntoActiveModel, QueryFilter};
+use anyhow::Result;
+use anyhow::Error;
 
 pub fn get_db_url() -> String {
     dotenv::var("DATABASE_URL").unwrap_or("sqlite::memory:".to_string())
 }
 
-async fn get_db_connection() -> anyhow::Result<DatabaseConnection> {
+async fn get_db_connection() -> Result<DatabaseConnection> {
     let db_url = get_db_url();
     match sea_orm::Database::connect(&db_url).await {
         Ok(db_conn) => Ok(db_conn),
-        Err(e) => Err(anyhow::Error::new(e)),
+        Err(e) => Err(Error::new(e)),
     }
 }
+
+pub async fn fetch_next_takeout(status: &str) -> Result<Option<TakeoutZip>> {
+    let db = get_db_connection().await?;
+    let model = takeout_zip::Entity::find()
+        .filter(Column::Status.eq(status))
+        .one(&db)
+        .await?;
+    match model {
+        Some(model) => {
+            Ok(Some(model))
+        }
+        None => Ok(None)
+    }
+}
+
 
 pub fn get_model(file: DriveItem) -> anyhow::Result<takeout_zip::ActiveModel> {
     if let DriveItem::File(id, name) = file {
@@ -26,7 +43,7 @@ pub fn get_model(file: DriveItem) -> anyhow::Result<takeout_zip::ActiveModel> {
             local_path: Set("".to_string()),
         })
     } else {
-        Err(anyhow::Error::msg("Not a File Item"))
+        Err(Error::msg("Not a File Item"))
     }
 }
 

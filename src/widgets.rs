@@ -1,8 +1,7 @@
-use crate::db::{list_takeouts, store_file, update_takeout_zip};
+use crate::db::{fetch_next_takeout, list_takeouts, store_file, update_takeout_zip};
 use crate::drive::{download, get_file_path, list_google_drive};
 use entity::takeout_zip;
 use entity::takeout_zip::Model;
-use futures::stream::FuturesUnordered;
 use google_drive::types::File;
 use ratatui::prelude::{
     Alignment, Buffer, Color, Constraint, Layout, Line, Modifier, Rect, StatefulWidget, Style,
@@ -14,16 +13,19 @@ use ratatui::symbols;
 use ratatui::widgets::{
     Block, Borders, HighlightSpacing, Padding, Paragraph, Row, Table, TableState, Wrap,
 };
-use sea_orm::IntoActiveModel;
 use std::fmt::Debug;
 use std::io::Cursor;
+use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
-use futures::StreamExt;
+use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 use takeout_zip::Model as TakeoutZip;
-use tokio::sync::mpsc;
-use tokio::task;
+use takeout_zip::ActiveModel as TakeoutZipActiveModel;
+use tokio::{task, time};
 use zip::ZipArchive;
+use anyhow::Result;
+use sea_orm::ActiveValue::Set;
+use sea_orm::IntoActiveModel;
 
 #[derive(Debug, Clone)]
 pub struct FileListWidget {
@@ -50,6 +52,7 @@ pub struct FileListState {
     progress: f64,
     file_name: String,
     current_folder: Option<DriveItem>,
+    processing: bool
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -83,24 +86,6 @@ pub enum UiActions {
     SelectItem,
     SwitchView,
     Quit,
-}
-
-async fn download_to_disk_with_progress(file_item: DriveItem) -> anyhow::Result<()> {
-    if let DriveItem::File(id, name) = file_item {
-        let mut response = download(id).await?;
-        let size = response.content_length().unwrap_or_default();
-        let mut written = usize::default();
-        let mut async_file = tokio::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(get_file_path(&name)).await?;
-        while let Some(chunk) = response.chunk().await? {
-            written += async_file.write(chunk.as_ref()).await?;
-            // self.update_file_progress(&name, written as f64 / size as f64);
-        }
-    }
-    Ok(())
 }
 
 impl FileListWidget {
@@ -271,75 +256,58 @@ impl FileListWidget {
     }
 
     pub fn start_processing(&self) {
-        /*
-        What does processing mean in this context?
-        Ideally we want this to
-
-        1. Select a file from the DB that is status new
-        2. Download the file from the drive - status Downloading
-        3. When done, status changes to downloaded.
-        4. Examine the File, status ZipDiscover - all files will be entered into db
-        5. When done, status changes to ZipDiscovered
-        6. That file is now ready for step two of file processing.
-        7. Unzip all files that have a corresponding JSON file attached to them
-        - or for which there exists in the database a JSON file.
-        I am just assuming here but I think that the zip files not necessarily
-        contain 100% matching pairs of jsons and images... not sure though.
-         */
         let this = self.clone();
         tokio::spawn(this.start_processing_pipeline());
+        
     }
-
-    pub fn get_next_zip_to_process(&self) -> Option<Model> {
-        let state = self.state.read().unwrap();
-        state
-            .zip_files
-            .iter()
-            .find(|zip| zip.status == "new")
-            .cloned()
-    }
-
-    pub fn get_zips_to_process(&self) -> Vec<Model> {
-        let state = self.state.read().unwrap();
-        state
-            .zip_files
-            .iter()
-            .filter(|zip| zip.status == "new")
-            .cloned()
-            .collect()
-    }
-
+    // Poll database for the next item with the specified status
+    
     async fn start_processing_pipeline(self) {
         self.set_loading_state(LoadingState::Processing);
-        let (tx, mut rx) = mpsc::channel::<TakeoutZip>(500);
+        let mut interval = time::interval(Duration::from_secs(3)); // Poll every 3 seconds
 
-        let download_task_pipe = task::spawn(async move {
-            let mut download_tasks = FuturesUnordered::new();
+        loop {
+            interval.tick().await; // Wait before each poll
 
-            // Feed items to the pipeline
-            for zip in self.get_zips_to_process() {
-                let sender = tx.clone();
-                download_tasks.push(async move {
-                    if download_to_disk_with_progress(DriveItem::File(zip.drive_id.clone(), zip.name.clone()))
-                        .await.is_ok() {
-                        sender.send(zip).await.unwrap();
+            // Check for "new" items
+            if let Ok(Some(mut item)) = fetch_next_takeout("new").await {
+                let this = self.clone();
+                let mut item = item.into_active_model();
+                
+                item.status = Set("downloading".to_string());
+                let mut item = update_takeout_zip(item).await.unwrap().into_active_model();
+
+                task::spawn(async move {
+                    // Simulate processing for "new" items
+                    match this.download_to_disk_with_progress(DriveItem::File(item.drive_id.clone().unwrap(), item.name.clone().unwrap())).await {
+                        Ok(_) => {}
+                        Err(_) => {}
                     }
+                    item.status = Set("downloaded".to_string());
+                    update_takeout_zip(item).await.unwrap();
                 });
             }
 
-            // Process download tasks concurrently
-            while download_tasks.next().await.is_some() {}
-            drop(tx); // Close channel when all downloads are done
-        });
+            // Check for "downloaded" items
+            if let Ok(Some(mut item)) = fetch_next_takeout("downloaded").await {
+                let this = self.clone();
 
-        let _ = tokio::join!(download_task_pipe);
+                item.status = Set("processing_zip".to_string());
+                let mut item = update_takeout_zip(item).await.unwrap().into_active_model();
 
-        // if let Some(zip_to_process) = self.get_next_zip_to_process() {
-        //     let mut ugh = zip_to_process.into_active_model();
-        //     ugh.status.set_if_not_equals("downloading".into());
-        //     let _zip_to_process = update_takeout_zip(ugh).await.expect("GFaraf");
-        //     self.fetch_takeout_zips().await;
-        // }
+                task::spawn(async move {
+                    // Simulate processing for "downloaded" items
+                    if let Err(e) = list_files(item.clone()).await {
+                        eprintln!("Error processing file listing: {}", e);
+                    }
+
+                    // Update status to "processed" after processing
+                    let mut updated_item = item;
+                    updated_item.status = Set("processed".to_string());
+                    updated_item.update(&db).await.unwrap();
+                });
+            }
+        }
     }
 
     pub fn process_file(&self) {
@@ -358,6 +326,58 @@ impl FileListWidget {
                     }
                 }
             }
+        }
+    }
+    
+    async fn examing_zip_with_progress(self, takeout_zip: TakeoutZip) -> Result<()> {
+        let mut archive = ZipArchive::new(cursor)?;
+        let archive_len = archive.len();
+        for i in 0..archive_len {
+            let mut file = archive.by_index(i)?;
+            let out_path = match file.enclosed_name() {
+                Some(path) => path,
+                None => continue,
+            };
+            self.update_file_progress(
+                out_path.to_str().unwrap(),
+                i as f64 / archive_len as f64,
+            );
+
+            let out_path = get_file_path(out_path.to_str().unwrap());
+
+            if file.is_dir() {
+                std::fs::create_dir_all(&out_path)?;
+            } else {
+                if let Some(p) = out_path.parent() {
+                    if !p.exists() {
+                        std::fs::create_dir_all(p)?;
+                    }
+                }
+                let mut outfile = std::fs::File::create(&out_path)?;
+                std::io::copy(&mut file, &mut outfile)?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn download_to_disk_with_progress(self, file_item: DriveItem) -> Result<String> {
+        if let DriveItem::File(id, name) = file_item {
+            let local_path = get_file_path(&name);
+            let mut response = download(id).await?;
+            let size = response.content_length().unwrap_or_default();
+            let mut written = usize::default();
+            let mut async_file = tokio::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(local_path.clone()).await?;
+            while let Some(chunk) = response.chunk().await? {
+                written += async_file.write(chunk.as_ref()).await?;
+                self.update_file_progress(&name, written as f64 / size as f64);
+            }
+            Ok(local_path.to_str().unwrap().to_string())
+        }else {
+            Err(anyhow::Error::msg("Not a file"))
         }
     }
 
