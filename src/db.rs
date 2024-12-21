@@ -1,10 +1,12 @@
+use std::future::Future;
 use crate::widgets::DriveItem;
-use entity::takeout_zip;
-use entity::takeout_zip::{Column, Model as TakeoutZip, ActiveModel as TakeoutZipActiveModel};
-use sea_orm::ActiveValue::Set;
-use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, IntoActiveModel, QueryFilter};
-use anyhow::Result;
 use anyhow::Error;
+use anyhow::Result;
+use entity::{file_in_zip, takeout_zip};
+use entity::takeout_zip::{ActiveModel as TakeoutZipActiveModel, Column, Model as TakeoutZip};
+use sea_orm::ActiveValue::Set;
+use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, DbErr, EntityTrait, IntoActiveModel, QueryFilter};
+use entity::file_in_zip::Model;
 
 pub fn get_db_url() -> String {
     dotenv::var("DATABASE_URL").unwrap_or("sqlite::memory:".to_string())
@@ -18,20 +20,38 @@ async fn get_db_connection() -> Result<DatabaseConnection> {
     }
 }
 
-pub async fn fetch_next_takeout(status: &str) -> Result<Option<TakeoutZip>> {
+pub async fn fetch_next_takeout(
+    status: &str,
+    new_status: Option<&str>,
+) -> Result<Option<TakeoutZipActiveModel>> {
     let db = get_db_connection().await?;
     let model = takeout_zip::Entity::find()
         .filter(Column::Status.eq(status))
         .one(&db)
         .await?;
     match model {
-        Some(model) => {
-            Ok(Some(model))
-        }
-        None => Ok(None)
+        Some(model) => match new_status {
+            None => Ok(Some(model.into_active_model())),
+            Some(new_status) => {
+                let mut model = model.into_active_model();
+                model.status = Set(new_status.to_string());
+                Ok(Some(model.update(&db).await?.into_active_model()))
+            }
+        },
+        None => Ok(None),
     }
 }
 
+pub async fn create_file_in_zip(name: String, path: String) -> Result<file_in_zip::Model> {
+    let am = file_in_zip::ActiveModel {
+        name: Set(name),
+        path: Set(path),
+        status: Set("new".to_owned()),
+        ..Default::default()
+    };
+    let r = am.insert(&get_db_connection().await?).await?;
+        Ok(r)
+}
 
 pub fn get_model(file: DriveItem) -> anyhow::Result<takeout_zip::ActiveModel> {
     if let DriveItem::File(id, name) = file {

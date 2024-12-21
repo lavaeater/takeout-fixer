@@ -1,7 +1,6 @@
-use crate::db::{fetch_next_takeout, list_takeouts, store_file, update_takeout_zip};
+use crate::db::{create_file_in_zip, fetch_next_takeout, list_takeouts, store_file, update_takeout_zip};
 use crate::drive::{download, get_file_path, list_google_drive};
-use entity::takeout_zip;
-use entity::takeout_zip::Model;
+use entity::{file_in_zip, takeout_zip};
 use google_drive::types::File;
 use ratatui::prelude::{
     Alignment, Buffer, Color, Constraint, Layout, Line, Modifier, Rect, StatefulWidget, Style,
@@ -15,17 +14,17 @@ use ratatui::widgets::{
 };
 use std::fmt::Debug;
 use std::io::Cursor;
-use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 use takeout_zip::Model as TakeoutZip;
 use takeout_zip::ActiveModel as TakeoutZipActiveModel;
+use file_in_zip::ActiveModel as FileInZipActiveModel;
 use tokio::{task, time};
 use zip::ZipArchive;
 use anyhow::Result;
 use sea_orm::ActiveValue::Set;
-use sea_orm::IntoActiveModel;
+use sea_orm::{ActiveModelTrait, TryIntoModel};
 
 #[derive(Debug, Clone)]
 pub struct FileListWidget {
@@ -270,41 +269,39 @@ impl FileListWidget {
             interval.tick().await; // Wait before each poll
 
             // Check for "new" items
-            if let Ok(Some(mut item)) = fetch_next_takeout("new").await {
+            if let Ok(Some(mut item)) = fetch_next_takeout("new", Some("downloading")).await {
                 let this = self.clone();
-                let mut item = item.into_active_model();
                 
-                item.status = Set("downloading".to_string());
-                let mut item = update_takeout_zip(item).await.unwrap().into_active_model();
-
                 task::spawn(async move {
                     // Simulate processing for "new" items
                     match this.download_to_disk_with_progress(DriveItem::File(item.drive_id.clone().unwrap(), item.name.clone().unwrap())).await {
-                        Ok(_) => {}
-                        Err(_) => {}
+                        Ok(path) => {
+                            item.status = Set("downloaded".to_string());
+                            item.local_path = Set(path);
+                        }
+                        Err(_) => {
+                            item.status = Set("download_failed".to_string());
+                        }
                     }
-                    item.status = Set("downloaded".to_string());
                     update_takeout_zip(item).await.unwrap();
                 });
             }
 
             // Check for "downloaded" items
-            if let Ok(Some(mut item)) = fetch_next_takeout("downloaded").await {
+            if let Ok(Some(mut item)) = fetch_next_takeout("downloaded", Some("processing_zip")).await {
                 let this = self.clone();
-
-                item.status = Set("processing_zip".to_string());
-                let mut item = update_takeout_zip(item).await.unwrap().into_active_model();
-
+                let model = item.clone().try_into_model().unwrap();
+                
                 task::spawn(async move {
-                    // Simulate processing for "downloaded" items
-                    if let Err(e) = list_files(item.clone()).await {
-                        eprintln!("Error processing file listing: {}", e);
+                    match this.examine_zip_with_progress(model).await {
+                        Ok(_) => {
+                            item.status = Set("processed_zip".to_string());
+                        }
+                        Err(_) => {
+                            item.status = Set("processing_failed".to_string());
+                        }
                     }
-
-                    // Update status to "processed" after processing
-                    let mut updated_item = item;
-                    updated_item.status = Set("processed".to_string());
-                    updated_item.update(&db).await.unwrap();
+                    update_takeout_zip(item).await.unwrap();
                 });
             }
         }
@@ -329,8 +326,9 @@ impl FileListWidget {
         }
     }
     
-    async fn examing_zip_with_progress(self, takeout_zip: TakeoutZip) -> Result<()> {
-        let mut archive = ZipArchive::new(cursor)?;
+    async fn examine_zip_with_progress(self, takeout_zip: TakeoutZip) -> Result<()> {
+        let f = std::fs::File::open(takeout_zip.local_path)?;
+        let mut archive = ZipArchive::new(f)?;
         let archive_len = archive.len();
         for i in 0..archive_len {
             let mut file = archive.by_index(i)?;
@@ -344,18 +342,8 @@ impl FileListWidget {
             );
 
             let out_path = get_file_path(out_path.to_str().unwrap());
-
-            if file.is_dir() {
-                std::fs::create_dir_all(&out_path)?;
-            } else {
-                if let Some(p) = out_path.parent() {
-                    if !p.exists() {
-                        std::fs::create_dir_all(p)?;
-                    }
-                }
-                let mut outfile = std::fs::File::create(&out_path)?;
-                std::io::copy(&mut file, &mut outfile)?;
-            }
+            let file_in_zip = create_file_in_zip(file.name().to_owned(),out_path.to_str().unwrap().to_owned()
+            ).await?;
         }
         Ok(())
     }
