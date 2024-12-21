@@ -16,15 +16,16 @@ use std::fmt::Debug;
 use std::io::Cursor;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncWriteExt, BufReader};
 use takeout_zip::Model as TakeoutZip;
 use takeout_zip::ActiveModel as TakeoutZipActiveModel;
 use file_in_zip::ActiveModel as FileInZipActiveModel;
 use tokio::{task, time};
-use zip::ZipArchive;
 use anyhow::Result;
+use async_zip::tokio::read::fs::ZipFileReader;
 use sea_orm::ActiveValue::Set;
 use sea_orm::{ActiveModelTrait, TryIntoModel};
+use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
 #[derive(Debug, Clone)]
 pub struct FileListWidget {
@@ -327,8 +328,10 @@ impl FileListWidget {
     }
     
     async fn examine_zip_with_progress(self, takeout_zip: TakeoutZip) -> Result<()> {
-        let f = std::fs::File::open(takeout_zip.local_path)?;
-        let mut archive = ZipArchive::new(f)?;
+        let mut file = tokio::fs::File::open(takeout_zip.local_path).await?;
+        let reader = BufReader::new(file).compat();
+        let mut reader = ZipFileReader::new(reader).await.expect("Failed to read zip file");
+        
         let archive_len = archive.len();
         for i in 0..archive_len {
             let mut file = archive.by_index(i)?;
