@@ -291,10 +291,9 @@ impl FileListWidget {
             // Check for "downloaded" items
             if let Ok(Some(mut item)) = fetch_next_takeout("downloaded", Some("processing_zip")).await {
                 let this = self.clone();
-                let model = item.clone().try_into_model().unwrap();
                 
                 task::spawn(async move {
-                    match this.examine_zip_with_progress(model).await {
+                    match this.examine_zip_with_progress(item.try_into_model().unwrap()).await {
                         Ok(_) => {
                             item.status = Set("processed_zip".to_string());
                         }
@@ -345,7 +344,9 @@ impl FileListWidget {
             );
 
             let out_path = get_file_path(out_path.to_str().unwrap());
-            let file_in_zip = create_file_in_zip(file.name().to_owned(),out_path.to_str().unwrap().to_owned()
+            let file_in_zip = create_file_in_zip(
+                file.name().to_owned(),
+                out_path.to_str().unwrap().to_owned()
             ).await?;
         }
         Ok(())

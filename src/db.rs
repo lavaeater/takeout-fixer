@@ -1,12 +1,14 @@
-use std::future::Future;
 use crate::widgets::DriveItem;
 use anyhow::Error;
 use anyhow::Result;
-use entity::{file_in_zip, takeout_zip};
-use entity::takeout_zip::{ActiveModel as TakeoutZipActiveModel, Column, Model as TakeoutZip};
-use sea_orm::ActiveValue::Set;
-use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, DbErr, EntityTrait, IntoActiveModel, QueryFilter};
 use entity::file_in_zip::Model;
+use entity::takeout_zip::{ActiveModel as TakeoutZipActiveModel, Column, Model as TakeoutZip};
+use entity::{file_in_zip, takeout_zip};
+use sea_orm::ActiveValue::Set;
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, DatabaseConnection, DbErr, EntityTrait, IntoActiveModel,
+    QueryFilter,
+};
 
 pub fn get_db_url() -> String {
     dotenv::var("DATABASE_URL").unwrap_or("sqlite::memory:".to_string())
@@ -50,7 +52,7 @@ pub async fn create_file_in_zip(name: String, path: String) -> Result<file_in_zi
         ..Default::default()
     };
     let r = am.insert(&get_db_connection().await?).await?;
-        Ok(r)
+    Ok(r)
 }
 
 pub fn get_model(file: DriveItem) -> anyhow::Result<takeout_zip::ActiveModel> {
