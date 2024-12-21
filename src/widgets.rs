@@ -1,7 +1,12 @@
-use crate::db::{create_file_in_zip, fetch_next_takeout, list_takeouts, store_file, update_takeout_zip};
+use crate::db::{
+    create_file_in_zip, fetch_next_takeout, list_takeouts, store_file, update_takeout_zip,
+};
 use crate::drive::{download, get_file_path, list_google_drive};
-use entity::{file_in_zip, takeout_zip};
-use google_drive::types::File;
+use anyhow::Result;
+use async_compression::tokio::bufread::GzipDecoder;
+use entity::takeout_zip;
+use futures::StreamExt;
+use google_drive::types::File as GoogleDriveFile;
 use ratatui::prelude::{
     Alignment, Buffer, Color, Constraint, Layout, Line, Modifier, Rect, StatefulWidget, Style,
     Stylize, Widget,
@@ -12,20 +17,15 @@ use ratatui::symbols;
 use ratatui::widgets::{
     Block, Borders, HighlightSpacing, Padding, Paragraph, Row, Table, TableState, Wrap,
 };
+use sea_orm::ActiveValue::Set;
+use sea_orm::TryIntoModel;
 use std::fmt::Debug;
-use std::io::Cursor;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
-use tokio::io::{AsyncWriteExt, BufReader};
 use takeout_zip::Model as TakeoutZip;
-use takeout_zip::ActiveModel as TakeoutZipActiveModel;
-use file_in_zip::ActiveModel as FileInZipActiveModel;
-use tokio::{task, time};
-use anyhow::Result;
-use async_zip::tokio::read::fs::ZipFileReader;
-use sea_orm::ActiveValue::Set;
-use sea_orm::{ActiveModelTrait, TryIntoModel};
-use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
+use tokio::io::{AsyncWriteExt, BufReader};
+use tokio::{fs::File as TokioFile, task, time};
+use tokio_tar::{Archive, EntryType};
 
 #[derive(Debug, Clone)]
 pub struct FileListWidget {
@@ -52,7 +52,9 @@ pub struct FileListState {
     progress: f64,
     file_name: String,
     current_folder: Option<DriveItem>,
-    processing: bool
+    processing: bool,
+    can_download: bool,
+    can_examine: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -123,14 +125,18 @@ impl FileListWidget {
     }
 
     pub fn handle_action(&mut self, ui_action: UiActions) {
-        let state = self.state.read().unwrap().view_state.clone();
+        let view_state = self.state.read().unwrap().view_state.clone();
         match ui_action {
-            UiActions::StartProcessing => match state {
+            UiActions::StartProcessing => match view_state {
                 FileListWidgetViewState::Files => {
                     self.store_files();
                 }
                 FileListWidgetViewState::Processing => {
-                    self.start_processing();
+                    if self.is_processing() {
+                        self.stop_processing();
+                    } else {
+                        self.start_processing();
+                    }
                 }
             },
             UiActions::ScrollDown => {
@@ -142,7 +148,7 @@ impl FileListWidget {
             UiActions::SelectItem => {
                 self.process_file();
             }
-            UiActions::SwitchView => match state {
+            UiActions::SwitchView => match view_state {
                 FileListWidgetViewState::Files => {
                     self.show_processing();
                 }
@@ -191,7 +197,7 @@ impl FileListWidget {
         self.set_loading_state(LoadingState::Idle);
     }
 
-    fn on_load(&self, files: &[File]) {
+    fn on_load(&self, files: &[GoogleDriveFile]) {
         let mut all_files: Vec<DriveItem> = files.iter().map(Into::into).collect();
         all_files.sort_by(|a, b| match (a, b) {
             (DriveItem::Folder { .. }, DriveItem::File { .. }) => std::cmp::Ordering::Less,
@@ -255,54 +261,105 @@ impl FileListWidget {
         self.state.write().unwrap().table_state.scroll_up_by(1);
     }
 
+    pub fn stop_processing(&self) {
+        self.state.write().unwrap().processing = false;
+    }
+
+    pub fn is_processing(&self) -> bool {
+        self.state.read().unwrap().processing
+    }
+
+    pub fn start_download(&self) {
+        self.state.write().unwrap().can_download = false;
+    }
+
+    pub fn start_examination(&self) {
+        self.state.write().unwrap().can_examine = false;
+    }
+
+    pub fn finish_download(&self) {
+        self.state.write().unwrap().can_download = true;
+    }
+
+    pub fn finish_examination(&self) {
+        self.state.write().unwrap().can_examine = true;
+    }
+
+    pub fn can_download(&self) -> bool {
+        self.state.read().unwrap().can_download
+    }
+
+    pub fn can_examine(&self) -> bool {
+        self.state.read().unwrap().can_examine
+    }
+
     pub fn start_processing(&self) {
+        let mut state = self.state.write().unwrap();
+        state.processing = true;
+        state.can_download = true;
+        state.can_examine = true;
         let this = self.clone();
         tokio::spawn(this.start_processing_pipeline());
-        
     }
-    // Poll database for the next item with the specified status
-    
+
     async fn start_processing_pipeline(self) {
         self.set_loading_state(LoadingState::Processing);
-        let mut interval = time::interval(Duration::from_secs(3)); // Poll every 3 seconds
+        let mut interval = time::interval(Duration::from_secs(10)); // Poll every 3 seconds
 
-        loop {
+        while self.is_processing() {
             interval.tick().await; // Wait before each poll
 
             // Check for "new" items
-            if let Ok(Some(mut item)) = fetch_next_takeout("new", Some("downloading")).await {
-                let this = self.clone();
-                
-                task::spawn(async move {
-                    // Simulate processing for "new" items
-                    match this.download_to_disk_with_progress(DriveItem::File(item.drive_id.clone().unwrap(), item.name.clone().unwrap())).await {
-                        Ok(path) => {
-                            item.status = Set("downloaded".to_string());
-                            item.local_path = Set(path);
+            if self.can_download() {
+                if let Ok(Some(mut item)) = fetch_next_takeout("new", Some("downloading")).await {
+                    self.start_download();
+                    let this = self.clone();
+
+                    task::spawn(async move {
+                        // Simulate processing for "new" items
+                        match this
+                            .download_to_disk_with_progress(DriveItem::File(
+                                item.drive_id.clone().unwrap(),
+                                item.name.clone().unwrap(),
+                            ))
+                            .await
+                        {
+                            Ok(path) => {
+                                item.status = Set("downloaded".to_string());
+                                item.local_path = Set(path.clone());
+                            }
+                            Err(_) => {
+                                item.status = Set("download_failed".to_string());
+                            }
                         }
-                        Err(_) => {
-                            item.status = Set("download_failed".to_string());
-                        }
-                    }
-                    update_takeout_zip(item).await.unwrap();
-                });
+                        update_takeout_zip(item).await.unwrap();
+                    });
+                }
             }
 
             // Check for "downloaded" items
-            if let Ok(Some(mut item)) = fetch_next_takeout("downloaded", Some("processing_zip")).await {
-                let this = self.clone();
-                
-                task::spawn(async move {
-                    match this.examine_zip_with_progress(item.try_into_model().unwrap()).await {
-                        Ok(_) => {
-                            item.status = Set("processed_zip".to_string());
+            if self.can_examine() {
+                if let Ok(Some(mut item)) =
+                    fetch_next_takeout("downloaded", Some("processing_zip")).await
+                {
+                    self.start_examination();
+                    let this = self.clone();
+
+                    task::spawn(async move {
+                        match this
+                            .examine_zip_with_progress(item.clone().try_into_model().unwrap())
+                            .await
+                        {
+                            Ok(_) => {
+                                item.status = Set("processed_zip".to_string());
+                            }
+                            Err(_) => {
+                                item.status = Set("processing_failed".to_string());
+                            }
                         }
-                        Err(_) => {
-                            item.status = Set("processing_failed".to_string());
-                        }
-                    }
-                    update_takeout_zip(item).await.unwrap();
-                });
+                        update_takeout_zip(item).await.unwrap();
+                    });
+                }
             }
         }
     }
@@ -314,7 +371,7 @@ impl FileListWidget {
                 match file {
                     DriveItem::File(_, _) => {
                         if state.loading_state != LoadingState::Downloading {
-                            self.download_to_disk(file);
+                            // self.download_to_disk(file);
                         }
                         // tokio::spawn(download_file_and_unzip_that_bitch(file.clone()));
                     }
@@ -325,30 +382,33 @@ impl FileListWidget {
             }
         }
     }
-    
-    async fn examine_zip_with_progress(self, takeout_zip: TakeoutZip) -> Result<()> {
-        let mut file = tokio::fs::File::open(takeout_zip.local_path).await?;
-        let reader = BufReader::new(file).compat();
-        let mut reader = ZipFileReader::new(reader).await.expect("Failed to read zip file");
-        
-        let archive_len = archive.len();
-        for i in 0..archive_len {
-            let mut file = archive.by_index(i)?;
-            let out_path = match file.enclosed_name() {
-                Some(path) => path,
-                None => continue,
-            };
-            self.update_file_progress(
-                out_path.to_str().unwrap(),
-                i as f64 / archive_len as f64,
-            );
 
-            let out_path = get_file_path(out_path.to_str().unwrap());
-            let file_in_zip = create_file_in_zip(
-                file.name().to_owned(),
-                out_path.to_str().unwrap().to_owned()
-            ).await?;
+    async fn examine_zip_with_progress(self, takeout_zip: TakeoutZip) -> Result<()> {
+        let file = TokioFile::open(takeout_zip.local_path).await?;
+        let buf_reader = BufReader::new(file);
+
+        // Create an asynchronous Gzip decoder
+        let decoder = GzipDecoder::new(buf_reader);
+
+        // Convert the async decoder into a blocking reader using `tokio::io::read_to_end`
+        // let mut data = Vec::new();
+        let reader = BufReader::new(decoder);
+        let mut archive = Archive::new(reader);
+        while let Some(file) = archive.entries()?.next().await {
+            let entry = file?;
+            let path = entry.path()?;
+            // Check the type of entry
+            if entry.header().entry_type() == EntryType::Regular {
+                let out_path = get_file_path(path.to_str().unwrap());
+                let _file_in_zip = create_file_in_zip(
+                    takeout_zip.id,
+                    path.file_name().unwrap().to_str().unwrap().to_owned(),
+                    out_path.to_str().unwrap().to_owned(),
+                )
+                .await;
+            }
         }
+        self.finish_examination();
         Ok(())
     }
 
@@ -362,70 +422,73 @@ impl FileListWidget {
                 .write(true)
                 .create(true)
                 .truncate(true)
-                .open(local_path.clone()).await?;
+                .open(local_path.clone())
+                .await?;
             while let Some(chunk) = response.chunk().await? {
                 written += async_file.write(chunk.as_ref()).await?;
                 self.update_file_progress(&name, written as f64 / size as f64);
             }
+            self.finish_download();
             Ok(local_path.to_str().unwrap().to_string())
-        }else {
+        } else {
+            self.finish_download();
             Err(anyhow::Error::msg("Not a file"))
         }
     }
 
-    pub fn download_to_disk(&self, file_item: &DriveItem) {
-        let this = self.clone();
-        tokio::spawn(this.download_and_unzip_with_progress(file_item.clone()));
-    }
+    // pub fn download_to_disk(&self, file_item: &DriveItem) {
+    //     let this = self.clone();
+    //     tokio::spawn(this.download_and_unzip_with_progress(file_item.clone()));
+    // }
 
-    async fn download_and_unzip_with_progress(self, file_item: DriveItem) -> anyhow::Result<()> {
-        self.set_loading_state(LoadingState::Downloading);
-        if let DriveItem::File(id, name) = file_item {
-            let mut response = download(id).await?;
-            let size = response.content_length().unwrap_or_default();
-            let mut written = usize::default();
-            let mut acc = Vec::new();
-            while let Some(chunk) = response.chunk().await? {
-                acc.extend_from_slice(chunk.as_ref());
-                written += chunk.len();
-                self.update_file_progress(&name, written as f64 / size as f64);
-            }
-            // Create a Cursor for in-memory usage
-            let cursor = Cursor::new(acc);
-
-            self.set_loading_state(LoadingState::Processing);
-            // Use the zip crate to read from the stream
-            let mut archive = ZipArchive::new(cursor)?;
-            let archive_len = archive.len();
-            for i in 0..archive_len {
-                let mut file = archive.by_index(i)?;
-                let out_path = match file.enclosed_name() {
-                    Some(path) => path,
-                    None => continue,
-                };
-                self.update_file_progress(
-                    out_path.to_str().unwrap(),
-                    i as f64 / archive_len as f64,
-                );
-
-                let out_path = get_file_path(out_path.to_str().unwrap());
-
-                if file.is_dir() {
-                    std::fs::create_dir_all(&out_path)?;
-                } else {
-                    if let Some(p) = out_path.parent() {
-                        if !p.exists() {
-                            std::fs::create_dir_all(p)?;
-                        }
-                    }
-                    let mut outfile = std::fs::File::create(&out_path)?;
-                    std::io::copy(&mut file, &mut outfile)?;
-                }
-            }
-        }
-        self.set_loading_state(LoadingState::Idle);
-        Ok(())
-    }
+    // async fn download_and_unzip_with_progress(self, file_item: DriveItem) -> anyhow::Result<()> {
+    //     self.set_loading_state(LoadingState::Downloading);
+    //     if let DriveItem::File(id, name) = file_item {
+    //         let mut response = download(id).await?;
+    //         let size = response.content_length().unwrap_or_default();
+    //         let mut written = usize::default();
+    //         let mut acc = Vec::new();
+    //         while let Some(chunk) = response.chunk().await? {
+    //             acc.extend_from_slice(chunk.as_ref());
+    //             written += chunk.len();
+    //             self.update_file_progress(&name, written as f64 / size as f64);
+    //         }
+    //         // Create a Cursor for in-memory usage
+    //         let cursor = Cursor::new(acc);
+    //
+    //         self.set_loading_state(LoadingState::Processing);
+    //         // Use the zip crate to read from the stream
+    //         let mut archive = ZipArchive::new(cursor)?;
+    //         let archive_len = archive.len();
+    //         for i in 0..archive_len {
+    //             let mut file = archive.by_index(i)?;
+    //             let out_path = match file.enclosed_name() {
+    //                 Some(path) => path,
+    //                 None => continue,
+    //             };
+    //             self.update_file_progress(
+    //                 out_path.to_str().unwrap(),
+    //                 i as f64 / archive_len as f64,
+    //             );
+    //
+    //             let out_path = get_file_path(out_path.to_str().unwrap());
+    //
+    //             if file.is_dir() {
+    //                 std::fs::create_dir_all(&out_path)?;
+    //             } else {
+    //                 if let Some(p) = out_path.parent() {
+    //                     if !p.exists() {
+    //                         std::fs::create_dir_all(p)?;
+    //                     }
+    //                 }
+    //                 let mut outfile = std::fs::File::create(&out_path)?;
+    //                 std::io::copy(&mut file, &mut outfile)?;
+    //             }
+    //         }
+    //     }
+    //     self.set_loading_state(LoadingState::Idle);
+    //     Ok(())
+    // }
 
     fn render_status(&mut self, area: Rect, buf: &mut Buffer) {
         let state = self.state.read().unwrap();
@@ -613,8 +676,8 @@ impl From<&DriveItem> for Row<'_> {
     }
 }
 
-impl From<&File> for DriveItem {
-    fn from(file: &File) -> Self {
+impl From<&GoogleDriveFile> for DriveItem {
+    fn from(file: &GoogleDriveFile) -> Self {
         if file.mime_type == "application/vnd.google-apps.folder" {
             DriveItem::Folder(file.id.to_string(), file.name.to_string())
         } else {

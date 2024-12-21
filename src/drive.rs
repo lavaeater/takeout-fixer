@@ -189,11 +189,14 @@ pub async fn list_google_drive(folder: Option<DriveItem>) -> Result<Vec<File>> {
     Ok(response.body)
 }
 
+pub fn get_target_folder() -> PathBuf {
+    dirs::home_dir()
+        .expect("Could not find home dir")
+        .join(env::var("TARGET_FOLDER").expect("Missing the TARGET_FOLDER environment variable."))
+}
+
 pub fn get_file_path(file_name: &str) -> PathBuf {
-    let file_path = dirs::home_dir().expect("Could not find home dir");
-    let target_folder = file_path
-        .join(env::var("TARGET_FOLDER").expect("Missing the TARGET_FOLDER environment variable."));
-    target_folder.join(file_name)
+    get_target_folder().join(file_name)
 }
 
 fn get_token_file_path() -> PathBuf {

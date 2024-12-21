@@ -1,13 +1,11 @@
 use crate::widgets::DriveItem;
 use anyhow::Error;
 use anyhow::Result;
-use entity::file_in_zip::Model;
 use entity::takeout_zip::{ActiveModel as TakeoutZipActiveModel, Column, Model as TakeoutZip};
 use entity::{file_in_zip, takeout_zip};
 use sea_orm::ActiveValue::Set;
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseConnection, DbErr, EntityTrait, IntoActiveModel,
-    QueryFilter,
+    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, IntoActiveModel, QueryFilter,
 };
 
 pub fn get_db_url() -> String {
@@ -44,8 +42,9 @@ pub async fn fetch_next_takeout(
     }
 }
 
-pub async fn create_file_in_zip(name: String, path: String) -> Result<file_in_zip::Model> {
+pub async fn create_file_in_zip(takeout_zip_id: i32, name: String, path: String) -> Result<file_in_zip::Model> {
     let am = file_in_zip::ActiveModel {
+        takeout_zip_id: Set(takeout_zip_id),
         name: Set(name),
         path: Set(path),
         status: Set("new".to_owned()),

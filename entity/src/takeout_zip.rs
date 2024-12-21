@@ -15,6 +15,15 @@ pub struct Model {
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
-pub enum Relation {}
+pub enum Relation {
+    #[sea_orm(has_many = "super::file_in_zip::Entity")]
+    FileInZip,
+}
+
+impl Related<super::file_in_zip::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::FileInZip.def()
+    }
+}
 
 impl ActiveModelBehavior for ActiveModel {}

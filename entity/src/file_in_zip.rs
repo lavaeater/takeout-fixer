@@ -11,9 +11,25 @@ pub struct Model {
     pub path: String,
     pub status: String,
     pub log: Json,
+    pub takeout_zip_id: i32,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
-pub enum Relation {}
+pub enum Relation {
+    #[sea_orm(
+        belongs_to = "super::takeout_zip::Entity",
+        from = "Column::TakeoutZipId",
+        to = "super::takeout_zip::Column::Id",
+        on_update = "Cascade",
+        on_delete = "Cascade"
+    )]
+    TakeoutZip,
+}
+
+impl Related<super::takeout_zip::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::TakeoutZip.def()
+    }
+}
 
 impl ActiveModelBehavior for ActiveModel {}
