@@ -49,6 +49,7 @@ pub async fn create_file_in_zip(takeout_zip_id: i32, name: String, path: String)
         path: Set(path),
         status: Set("new".to_owned()),
         log: Set(serde_json::Value::String("".to_owned())),
+        ..Default::default()
     };
     match am.insert(&get_db_connection().await?).await{
         Ok(model) => Ok(model),

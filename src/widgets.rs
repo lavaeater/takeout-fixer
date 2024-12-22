@@ -398,11 +398,11 @@ impl FileListWidget {
             let path = entry.path()?;
             // Check the type of entry
             if entry.header().entry_type() == EntryType::Regular {
-                let out_path = get_file_path(path.to_str().unwrap());
+                // let out_path = get_file_path(path.to_str().unwrap());
                 let _file_in_zip = create_file_in_zip(
                     takeout_zip.id,
                     path.file_name().unwrap().to_str().unwrap().to_owned(),
-                    out_path.to_str().unwrap().to_owned(),
+                    path.to_str().unwrap().to_owned(),
                 )
                 .await?;
             }
