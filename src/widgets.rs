@@ -391,12 +391,9 @@ impl FileListWidget {
 
         // Create an asynchronous Gzip decoder
         let decoder = GzipDecoder::new(buf_reader);
-
-        // Convert the async decoder into a blocking reader using `tokio::io::read_to_end`
-        // let mut data = Vec::new();
-        let reader = BufReader::new(decoder);
-        let mut archive = Archive::new(reader);
-        while let Some(file) = archive.entries()?.next().await {
+        let mut archive = Archive::new(decoder);
+        let mut entries = archive.entries()?;
+        while let Some(file) = entries.next().await {
             let entry = file?;
             let path = entry.path()?;
             // Check the type of entry
