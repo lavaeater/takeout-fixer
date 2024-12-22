@@ -404,7 +404,7 @@ impl FileListWidget {
                     path.file_name().unwrap().to_str().unwrap().to_owned(),
                     out_path.to_str().unwrap().to_owned(),
                 )
-                .await;
+                .await?;
             }
         }
         Ok(())
