@@ -354,8 +354,8 @@ impl FileListWidget {
                             Ok(_) => {
                                 item.status = Set("processed_zip".to_string());
                             }
-                            Err(_) => {
-                                item.status = Set("processing_failed".to_string());
+                            Err(err) => {
+                                item.status = Set(format!("{} - processing_failed",err));
                             }
                         }
                         update_takeout_zip(item).await.unwrap();

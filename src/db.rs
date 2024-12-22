@@ -50,8 +50,10 @@ pub async fn create_file_in_zip(takeout_zip_id: i32, name: String, path: String)
         status: Set("new".to_owned()),
         ..Default::default()
     };
-    let r = am.insert(&get_db_connection().await?).await?;
-    Ok(r)
+    match am.insert(&get_db_connection().await?).await{
+        Ok(model) => Ok(model),
+        Err(e) => Err(Error::new(e))
+    }
 }
 
 pub fn get_model(file: DriveItem) -> anyhow::Result<takeout_zip::ActiveModel> {
