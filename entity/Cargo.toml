@@ -11,3 +11,4 @@ path = "src/lib.rs"
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 sea-orm = "1.1.2"
+ratatui = "0.29.0"

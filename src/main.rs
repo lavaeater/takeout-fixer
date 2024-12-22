@@ -29,9 +29,10 @@ async fn main() -> AppResult<()> {
     let events = EventHandler::new(250);
     let mut tui = Tui::new(terminal, events);
     tui.init()?;
+    app.file_list_widget.list_files(None);
 
     // Start the main loop.
-    while app.running {
+    while app.file_list_widget.is_running {
         // Render the user interface.
         tui.draw(&mut app)?;
         // Handle events.
