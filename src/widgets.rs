@@ -575,9 +575,9 @@ impl FileListWidget {
         // a table with the list of pull requests
         let rows = state.files.iter();
         let widths = [
-            Constraint::Percentage(25),
-            Constraint::Percentage(70),
             Constraint::Percentage(5),
+            Constraint::Percentage(70),
+            Constraint::Percentage(25),
         ];
         let table = Table::new(rows, widths)
             .block(block)
