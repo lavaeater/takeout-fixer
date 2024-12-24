@@ -97,3 +97,13 @@ pub async fn store_files(files: Vec<DriveItem>) -> anyhow::Result<()> {
     }
     Ok(())
 }
+
+pub async fn fetch_file_to_process() -> Result<Option<file_in_zip::Model>> {
+    let conn = get_db_connection().await?;
+    let model = file_in_zip::Entity::find()
+        .filter(Column::Status.eq("new"))
+        .filter(Column::Name.eq("new"))
+        .one(&conn)
+        .await?;
+    Ok(model)
+}
