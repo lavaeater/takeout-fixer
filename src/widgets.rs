@@ -541,9 +541,9 @@ impl FileListWidget {
         // a table with the list of db zip files
         let rows = state.zip_files.iter();
         let widths = [
-            Constraint::Percentage(25),
+            Constraint::Percentage(5),
             Constraint::Percentage(60),
-            Constraint::Percentage(15),
+            Constraint::Percentage(35),
         ];
         let table = Table::new(rows, widths)
             .block(block)
