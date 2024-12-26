@@ -398,7 +398,6 @@ impl FileListWidget {
             let path = entry.path()?;
             // Check the type of entry
             if entry.header().entry_type() == EntryType::Regular {
-                // let out_path = get_file_path(path.to_str().unwrap());
                 let _file_in_zip = create_file_in_zip(
                     takeout_zip.id,
                     path.file_name().unwrap().to_str().unwrap().to_owned(),
@@ -564,12 +563,15 @@ impl FileListWidget {
             .title("Folder?")
             .title_alignment(Alignment::Center);
 
-        if let Some(folder) = &state.current_folder {
-            let folder_name = match folder {
-                DriveItem::Folder(_, name) => name,
-                _ => "",
-            };
-            block = block.title_top(format!("Files in: {}", folder_name));
+        match &state.current_folder {
+            Some(folder) => {
+                let folder_name = match folder {
+                    DriveItem::Folder(_, name) => name,
+                    _ => "",
+                };
+                block = block.title_top(format!("Files in: {}", folder_name));
+            }
+            _ => {}
         }
 
         // a table with the list of pull requests
