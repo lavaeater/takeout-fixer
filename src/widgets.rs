@@ -1,6 +1,4 @@
-use crate::db::{
-    create_file_in_zip, fetch_next_takeout, list_takeouts, store_file, update_takeout_zip,
-};
+use crate::db::{create_file_in_zip, fetch_next_takeout, list_takeouts, set_file_types, store_file, update_takeout_zip};
 use crate::drive::{download, get_file_path, list_google_drive};
 use anyhow::Result;
 use async_compression::tokio::bufread::GzipDecoder;
@@ -55,7 +53,6 @@ pub struct FileListState {
     processing: bool,
     downloading_task_count: u8,
     examination_task_count: u8,
-    file_pairing_task_count: u8,
     max_task_count: u8
 }
 
@@ -73,7 +70,6 @@ impl Default for FileListState {
             processing: false,
             downloading_task_count: 0,
             examination_task_count: 0,
-            file_pairing_task_count: 0,
             max_task_count: 3
         }
     }
@@ -407,6 +403,9 @@ impl FileListWidget {
                     });
                 }
             }
+            task::spawn(async {
+                set_file_types().await.unwrap();
+            });
         }
     }
 
@@ -476,60 +475,6 @@ impl FileListWidget {
             Err(anyhow::Error::msg("Not a file"))
         }
     }
-
-    // pub fn download_to_disk(&self, file_item: &DriveItem) {
-    //     let this = self.clone();
-    //     tokio::spawn(this.download_and_unzip_with_progress(file_item.clone()));
-    // }
-
-    // async fn download_and_unzip_with_progress(self, file_item: DriveItem) -> anyhow::Result<()> {
-    //     self.set_loading_state(LoadingState::Downloading);
-    //     if let DriveItem::File(id, name) = file_item {
-    //         let mut response = download(id).await?;
-    //         let size = response.content_length().unwrap_or_default();
-    //         let mut written = usize::default();
-    //         let mut acc = Vec::new();
-    //         while let Some(chunk) = response.chunk().await? {
-    //             acc.extend_from_slice(chunk.as_ref());
-    //             written += chunk.len();
-    //             self.update_file_progress(&name, written as f64 / size as f64);
-    //         }
-    //         // Create a Cursor for in-memory usage
-    //         let cursor = Cursor::new(acc);
-    //
-    //         self.set_loading_state(LoadingState::Processing);
-    //         // Use the zip crate to read from the stream
-    //         let mut archive = ZipArchive::new(cursor)?;
-    //         let archive_len = archive.len();
-    //         for i in 0..archive_len {
-    //             let mut file = archive.by_index(i)?;
-    //             let out_path = match file.enclosed_name() {
-    //                 Some(path) => path,
-    //                 None => continue,
-    //             };
-    //             self.update_file_progress(
-    //                 out_path.to_str().unwrap(),
-    //                 i as f64 / archive_len as f64,
-    //             );
-    //
-    //             let out_path = get_file_path(out_path.to_str().unwrap());
-    //
-    //             if file.is_dir() {
-    //                 std::fs::create_dir_all(&out_path)?;
-    //             } else {
-    //                 if let Some(p) = out_path.parent() {
-    //                     if !p.exists() {
-    //                         std::fs::create_dir_all(p)?;
-    //                     }
-    //                 }
-    //                 let mut outfile = std::fs::File::create(&out_path)?;
-    //                 std::io::copy(&mut file, &mut outfile)?;
-    //             }
-    //         }
-    //     }
-    //     self.set_loading_state(LoadingState::Idle);
-    //     Ok(())
-    // }
 
     fn render_status(&mut self, area: Rect, buf: &mut Buffer) {
         let state = self.state.read().unwrap();

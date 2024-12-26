@@ -34,7 +34,7 @@ impl MigrationTrait for Migration {
                     .col(string(FileInZip::Status))
                     .col(json(FileInZip::Log))
                     .col(integer_null(FileInZip::JsonId))
-                    .col(string(FileInZip::Type))
+                    .col(string(FileInZip::FileType))
                     .to_owned(),
                 FileInZip::Table,
                 FileInZip::TakeoutZipId,
@@ -125,7 +125,7 @@ enum FileInZip {
     Status,
     Log,
     JsonId,
-    Type,
+    FileType,
 }
 impl Display for FileInZip {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -138,7 +138,7 @@ impl Display for FileInZip {
             FileInZip::Status => write!(f, "status"),
             FileInZip::Log => write!(f, "log"),
             FileInZip::JsonId => write!(f, "json_id"),
-            FileInZip::Type => write!(f, "type"),
+            FileInZip::FileType => write!(f, "type"),
         }
     }
 }
