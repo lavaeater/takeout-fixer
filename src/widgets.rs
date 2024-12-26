@@ -20,7 +20,7 @@ use ratatui::widgets::{
 use sea_orm::ActiveValue::Set;
 use sea_orm::TryIntoModel;
 use std::fmt::Debug;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, RwLock, RwLockReadGuard};
 use std::time::Duration;
 use takeout_zip::Model as TakeoutZip;
 use tokio::io::{AsyncWriteExt, BufReader};
@@ -42,7 +42,7 @@ impl Default for FileListWidget {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct FileListState {
     files: Vec<DriveItem>,
     zip_files: Vec<TakeoutZip>,
@@ -53,8 +53,30 @@ pub struct FileListState {
     file_name: String,
     current_folder: Option<DriveItem>,
     processing: bool,
-    can_download: bool,
-    can_examine: bool,
+    downloading_task_count: u8,
+    examination_task_count: u8,
+    file_pairing_task_count: u8,
+    max_task_count: u8
+}
+
+impl Default for FileListState {
+    fn default() -> Self {
+        Self {
+            files: Vec::new(),
+            zip_files: Vec::new(),
+            loading_state: LoadingState::Idle,
+            view_state: FileListWidgetViewState::Files,
+            table_state: TableState::default(),
+            progress: 0.0,
+            file_name: String::default(),
+            current_folder: None,
+            processing: false,
+            downloading_task_count: 0,
+            examination_task_count: 0,
+            file_pairing_task_count: 0,
+            max_task_count: 3
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -125,7 +147,7 @@ impl FileListWidget {
     }
 
     pub fn handle_action(&mut self, ui_action: UiActions) {
-        let view_state = self.state.read().unwrap().view_state.clone();
+        let view_state = self.get_read_state().view_state.clone();
         match ui_action {
             UiActions::StartProcessing => match view_state {
                 FileListWidgetViewState::Files => {
@@ -180,7 +202,7 @@ impl FileListWidget {
 
     pub fn show_files(&self) {
         self.set_view_state(FileListWidgetViewState::Files);
-        self.list_files(self.state.read().unwrap().current_folder.clone());
+        self.list_files(self.get_read_state().current_folder.clone());
     }
 
     async fn store_files_in_db(self, files: Vec<DriveItem>) {
@@ -208,7 +230,7 @@ impl FileListWidget {
             }
         });
 
-        let mut state = self.state.write().unwrap();
+        let mut state = self.get_write_state();
         state.loading_state = LoadingState::Loaded;
         state.files.clear();
         state.files.extend(all_files);
@@ -218,7 +240,7 @@ impl FileListWidget {
     }
 
     fn on_fetch_takeouts(&self, takeouts: &[TakeoutZip]) {
-        let mut state = self.state.write().unwrap();
+        let mut state = self.get_write_state();
 
         state.zip_files.clear();
         state.zip_files.extend(takeouts.to_vec());
@@ -233,16 +255,16 @@ impl FileListWidget {
     }
 
     fn set_loading_state(&self, state: LoadingState) {
-        self.state.write().unwrap().loading_state = state;
+        self.get_write_state().loading_state = state;
     }
 
     fn set_view_state(&self, state: FileListWidgetViewState) {
-        self.state.write().unwrap().view_state = state;
+        self.get_write_state().view_state = state;
     }
 
     fn set_current_folder(&self, folder: Option<DriveItem>) {
         if let Some(folder) = folder {
-            self.state.write().unwrap().current_folder = Some(folder);
+            self.get_write_state().current_folder = Some(folder);
         }
     }
 
@@ -252,52 +274,74 @@ impl FileListWidget {
             state.file_name = file_name.to_string();
         }
     }
+    
+    pub fn get_read_state(&self) -> RwLockReadGuard<'_, FileListState> {
+        self.state.read().unwrap()
+    }
+    
+    pub fn get_write_state(&self) -> std::sync::RwLockWriteGuard<'_, FileListState> {
+        self.state.write().unwrap()
+    }
 
     pub fn scroll_down(&self) {
-        self.state.write().unwrap().table_state.scroll_down_by(1);
+        self.get_write_state().table_state.scroll_down_by(1);
     }
 
     pub fn scroll_up(&self) {
-        self.state.write().unwrap().table_state.scroll_up_by(1);
+        self.get_write_state().table_state.scroll_up_by(1);
     }
 
     pub fn stop_processing(&self) {
-        self.state.write().unwrap().processing = false;
+        self.get_write_state().processing = false;
     }
 
     pub fn is_processing(&self) -> bool {
-        self.state.read().unwrap().processing
+        self.get_read_state().processing
     }
 
     pub fn start_download(&self) {
-        self.state.write().unwrap().can_download = false;
+        let mut state = self.get_write_state();
+        if state.downloading_task_count < state.max_task_count {
+            state.downloading_task_count += 1;
+        }
     }
 
     pub fn start_examination(&self) {
-        self.state.write().unwrap().can_examine = false;
+        let mut state = self.get_write_state();
+        if state.examination_task_count < state.max_task_count {
+            state.examination_task_count += 1;
+        }
     }
 
     pub fn finish_download(&self) {
-        self.state.write().unwrap().can_download = true;
+        let mut state = self.get_write_state();
+        if state.downloading_task_count > 0 {
+            state.downloading_task_count -= 1;
+        }
     }
 
     pub fn finish_examination(&self) {
-        self.state.write().unwrap().can_examine = true;
+        let mut state = self.get_write_state();
+        if state.examination_task_count > 0 {
+            state.examination_task_count -= 1;
+        }
     }
 
     pub fn can_download(&self) -> bool {
-        self.state.read().unwrap().can_download
+        let state = self.get_read_state();
+        state.downloading_task_count < state.max_task_count
     }
 
     pub fn can_examine(&self) -> bool {
-        self.state.read().unwrap().can_examine
+        let state = self.get_read_state();
+        state.examination_task_count < state.max_task_count
     }
 
     pub fn start_processing(&self) {
-        let mut state = self.state.write().unwrap();
+        let mut state = self.get_write_state();
         state.processing = true;
-        state.can_download = true;
-        state.can_examine = true;
+        state.downloading_task_count = 0;
+        state.examination_task_count = 0;
         let this = self.clone();
         tokio::spawn(this.start_processing_pipeline());
     }
@@ -522,7 +566,7 @@ impl FileListWidget {
     }
 
     fn render_processing_area(&mut self, area: Rect, buf: &mut Buffer) {
-        let mut state = self.state.write().unwrap();
+        let mut state = self.get_write_state();
 
         // // a block with a right aligned title with the loading state on the right
         let mut block = Block::bordered()
@@ -554,7 +598,7 @@ impl FileListWidget {
     }
 
     fn render_file_list_area(&mut self, area: Rect, buf: &mut Buffer) {
-        let mut state = self.state.write().unwrap();
+        let mut state = self.get_write_state();
 
         // // a block with a right aligned title with the loading state on the right
         let mut block = Block::bordered()
@@ -627,7 +671,7 @@ impl FileListWidget {
 
 impl Widget for &mut FileListWidget {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let state = self.state.read().unwrap().view_state.clone();
+        let state = self.get_read_state().view_state.clone();
         match state {
             FileListWidgetViewState::Files => {
                 self.render_file_view(area, buf);
