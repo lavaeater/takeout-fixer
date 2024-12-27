@@ -147,7 +147,7 @@ pub async fn fetch_media_file_to_process(
 ) -> Result<Option<file_in_zip::Model>> {
     let conn = get_db_connection().await?;
     let model = file_in_zip::Entity::find()
-        .filter(Column::Status.eq(status))
+        .filter(file_in_zip::Column::Status.eq(status))
         .one(&conn)
         .await?;
     match model {
@@ -159,6 +159,8 @@ pub async fn fetch_media_file_to_process(
                 Ok(Some(model.update(&conn).await?))
             }
         },
-        None => Ok(None),
+        None => { 
+            Ok(None)
+        },
     }
 }

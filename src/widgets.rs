@@ -300,7 +300,7 @@ impl FileListWidget {
 
     pub fn start_processing_file(&self) {
         let mut state = self.get_write_state();
-        if state.file_process_task_count < state.max_task_count * 2 {
+        if state.file_process_task_count < state.max_task_count * 4 {
             state.file_process_task_count += 1;
         }
     }
@@ -314,7 +314,7 @@ impl FileListWidget {
 
     pub fn can_process_file(&self) -> bool {
         let state = self.get_read_state();
-        state.file_process_task_count < state.max_task_count * 2
+        state.file_process_task_count < state.max_task_count * 4
     }
     
     pub fn start_download(&self) {
@@ -369,7 +369,7 @@ impl FileListWidget {
 
     async fn start_processing_pipeline(self) {
         self.set_loading_state(LoadingState::Processing);
-        let mut interval = time::interval(Duration::from_secs(10)); // Poll every 3 seconds
+        let mut interval = time::interval(Duration::from_millis(100)); // Poll every 3 seconds
 
         while self.is_processing() {
             interval.tick().await; // Wait before each poll
@@ -455,7 +455,7 @@ impl FileListWidget {
                                 item.status = Set(format!("{} - processing_failed",err));
                             }
                         }
-                        later.finish_examination();
+                        later.finish_processing_file();
                     });
                 }
             }
@@ -467,12 +467,7 @@ impl FileListWidget {
             if let Some(selected) = state.table_state.selected() {
                 let file = &state.files[selected];
                 match file {
-                    DriveItem::File(_, _) => {
-                        if state.loading_state != LoadingState::Downloading {
-                            // self.download_to_disk(file);
-                        }
-                        // tokio::spawn(download_file_and_unzip_that_bitch(file.clone()));
-                    }
+                    DriveItem::File(_, _) => {}
                     DriveItem::Folder(_, _) => {
                         self.list_files(Some(file.clone()));
                     }
