@@ -1,8 +1,8 @@
-use crate::db::{create_file_in_zip, fetch_next_takeout, list_takeouts, set_file_types, store_file, update_takeout_zip};
+use crate::db::{create_file_in_zip, fetch_json_for_media_file, fetch_media_file_to_process, fetch_next_takeout, list_takeouts, set_file_types, store_file, update_takeout_zip};
 use crate::drive::{download, get_file_path, get_target_folder, list_google_drive};
 use anyhow::Result;
 use async_compression::tokio::bufread::GzipDecoder;
-use entity::takeout_zip;
+use entity::{file_in_zip, takeout_zip};
 use futures::StreamExt;
 use google_drive::types::File as GoogleDriveFile;
 use ratatui::prelude::{
@@ -16,7 +16,7 @@ use ratatui::widgets::{
     Block, Borders, HighlightSpacing, Padding, Paragraph, Row, Table, TableState, Wrap,
 };
 use sea_orm::ActiveValue::Set;
-use sea_orm::TryIntoModel;
+use sea_orm::{IntoActiveModel, TryIntoModel};
 use std::fmt::Debug;
 use std::sync::{Arc, RwLock, RwLockReadGuard};
 use std::time::Duration;
@@ -24,6 +24,7 @@ use takeout_zip::Model as TakeoutZip;
 use tokio::io::{AsyncWriteExt, BufReader};
 use tokio::{fs::File as TokioFile, task, time};
 use tokio_tar::{Archive, EntryType};
+use entity::prelude::FileInZip;
 
 #[derive(Debug, Clone)]
 pub struct FileListWidget {
@@ -53,6 +54,7 @@ pub struct FileListState {
     processing: bool,
     downloading_task_count: u8,
     examination_task_count: u8,
+    file_process_task_count: u8,
     max_task_count: u8
 }
 
@@ -70,6 +72,7 @@ impl Default for FileListState {
             processing: false,
             downloading_task_count: 0,
             examination_task_count: 0,
+            file_process_task_count: 0,
             max_task_count: 3
         }
     }
@@ -295,20 +298,32 @@ impl FileListWidget {
         self.get_read_state().processing
     }
 
+    pub fn start_processing_file(&self) {
+        let mut state = self.get_write_state();
+        if state.file_process_task_count < state.max_task_count * 2 {
+            state.file_process_task_count += 1;
+        }
+    }
+
+    pub fn finish_processing_file(&self) {
+        let mut state = self.get_write_state();
+        if state.file_process_task_count > 0 {
+            state.file_process_task_count -= 1;
+        }
+    }
+
+    pub fn can_process_file(&self) -> bool {
+        let state = self.get_read_state();
+        state.file_process_task_count < state.max_task_count * 2
+    }
+    
     pub fn start_download(&self) {
         let mut state = self.get_write_state();
         if state.downloading_task_count < state.max_task_count {
             state.downloading_task_count += 1;
         }
     }
-
-    pub fn start_examination(&self) {
-        let mut state = self.get_write_state();
-        if state.examination_task_count < state.max_task_count {
-            state.examination_task_count += 1;
-        }
-    }
-
+    
     pub fn finish_download(&self) {
         let mut state = self.get_write_state();
         if state.downloading_task_count > 0 {
@@ -316,6 +331,19 @@ impl FileListWidget {
         }
     }
 
+    pub fn can_download(&self) -> bool {
+        let state = self.get_read_state();
+        state.downloading_task_count < state.max_task_count
+    }
+
+
+    pub fn start_examination(&self) {
+        let mut state = self.get_write_state();
+        if state.examination_task_count < state.max_task_count {
+            state.examination_task_count += 1;
+        }
+    }
+    
     pub fn finish_examination(&self) {
         let mut state = self.get_write_state();
         if state.examination_task_count > 0 {
@@ -323,10 +351,6 @@ impl FileListWidget {
         }
     }
 
-    pub fn can_download(&self) -> bool {
-        let state = self.get_read_state();
-        state.downloading_task_count < state.max_task_count
-    }
 
     pub fn can_examine(&self) -> bool {
         let state = self.get_read_state();
@@ -338,6 +362,7 @@ impl FileListWidget {
         state.processing = true;
         state.downloading_task_count = 0;
         state.examination_task_count = 0;
+        state.file_process_task_count = 0;
         let this = self.clone();
         tokio::spawn(this.start_processing_pipeline());
     }
@@ -403,9 +428,37 @@ impl FileListWidget {
                     });
                 }
             }
+            
             task::spawn(async {
                 set_file_types().await.unwrap();
             });
+            
+            if self.can_process_file() {
+                if let Ok(Some(item)) =
+                    fetch_media_file_to_process("ready_to_process", Some("processing")).await
+                {
+                    self.start_processing_file();
+                    let this = self.clone();
+
+                    task::spawn(async move {
+                        let later = this.clone();
+                        match this
+                            .process_media_file(item.clone())
+                            .await
+                        {
+                            Ok(_) => {
+                                let mut item = item.into_active_model();
+                                item.status = Set("processed".to_string());
+                            }
+                            Err(err) => {
+                                let mut item = item.into_active_model();
+                                item.status = Set(format!("{} - processing_failed",err));
+                            }
+                        }
+                        later.finish_examination();
+                    });
+                }
+            }
         }
     }
 
@@ -426,6 +479,20 @@ impl FileListWidget {
                 }
             }
         }
+    }
+
+    async fn process_media_file(self, media_file: file_in_zip::Model) -> Result<()> {
+        /*
+        Above all else, the media file is an image or a video file, etc, that we can
+        apply some metadata from a json on using the exif thingie. After having used that
+        we can then move it to its proper place on the hard drive...
+         */
+        let json = fetch_json_for_media_file(&media_file).await?;
+        /*
+        
+        Now we have the paths... what to do next? Read that goshdarn json and do stuff to it.
+         */
+        Ok(())
     }
 
     async fn examine_zip_with_progress(self, takeout_zip: TakeoutZip) -> Result<()> {

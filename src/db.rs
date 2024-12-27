@@ -135,11 +135,30 @@ pub async fn set_file_types() -> Result<()> {
     Ok(())
 }
 
-pub async fn fetch_media_file_to_process() -> Result<Option<file_in_zip::Model>> {
+pub async fn fetch_json_for_media_file(media_file: &file_in_zip::Model) -> Result<file_in_zip::Model> {
+    let conn = get_db_connection().await?;
+    Ok(file_in_zip::Entity::find_by_id(media_file.json_id.unwrap())
+        .one(&conn).await?.unwrap())
+}
+
+pub async fn fetch_media_file_to_process(
+    status: &str,
+    new_status: Option<&str>,
+) -> Result<Option<file_in_zip::Model>> {
     let conn = get_db_connection().await?;
     let model = file_in_zip::Entity::find()
-        .filter(Column::Status.eq("ready_to_process"))
+        .filter(Column::Status.eq(status))
         .one(&conn)
         .await?;
-    Ok(model)
+    match model {
+        Some(model) => match new_status {
+            None => Ok(Some(model)),
+            Some(new_status) => {
+                let mut model = model.into_active_model();
+                model.status = Set(new_status.to_string());
+                Ok(Some(model.update(&conn).await?))
+            }
+        },
+        None => Ok(None),
+    }
 }
