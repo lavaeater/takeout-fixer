@@ -1,5 +1,5 @@
 use crate::db::{create_file_in_zip, fetch_next_takeout, list_takeouts, set_file_types, store_file, update_takeout_zip};
-use crate::drive::{download, get_file_path, list_google_drive};
+use crate::drive::{download, get_file_path, get_target_folder, list_google_drive};
 use anyhow::Result;
 use async_compression::tokio::bufread::GzipDecoder;
 use entity::takeout_zip;
@@ -436,15 +436,28 @@ impl FileListWidget {
         let decoder = GzipDecoder::new(buf_reader);
         let mut archive = Archive::new(decoder);
         let mut entries = archive.entries()?;
+        let target_folder = get_target_folder();
         while let Some(file) = entries.next().await {
-            let entry = file?;
-            let path = entry.path()?;
+            let mut entry = file?;
+            let full_path = target_folder.clone().join(&entry.path()?).into_boxed_path();
+            // Check the type of entry
             // Check the type of entry
             if entry.header().entry_type() == EntryType::Regular {
+                // Ensure parent directories exist
+                if let Some(parent) = full_path.parent() {
+                    tokio::fs::create_dir_all(parent).await?;
+                }
+                /*
+                 Modify so we first extract this file to where it is supposed to be, 
+                 then we add the data for the file to the database
+                 */
+                let mut output_file = tokio::fs::File::create(&full_path).await?;
+                tokio::io::copy(&mut entry, &mut output_file).await?;
+
                 let _file_in_zip = create_file_in_zip(
                     takeout_zip.id,
-                    path.file_name().unwrap().to_str().unwrap().to_owned(),
-                    path.to_str().unwrap().to_owned(),
+                    entry.path()?.file_name().unwrap().to_str().unwrap().to_owned(),
+                    full_path.to_str().unwrap().to_owned(),
                 )
                 .await?;
             }

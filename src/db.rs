@@ -115,9 +115,10 @@ pub async fn set_file_types() -> Result<()> {
     // Raw SQL query
     let raw_sql = r#"
     UPDATE file_in_zip AS media
-    SET json_id = json.id
+    SET json_id = json.id, status = 'ready_to_process'
     FROM file_in_zip AS json
     WHERE media.file_type = 'media'
+      AND media.status = 'new'
       AND media.json_id IS NULL
       AND json.file_type = 'json'
       AND json.takeout_zip_id = media.takeout_zip_id
@@ -134,12 +135,10 @@ pub async fn set_file_types() -> Result<()> {
     Ok(())
 }
 
-#[allow(dead_code)]
 pub async fn fetch_media_file_to_process() -> Result<Option<file_in_zip::Model>> {
     let conn = get_db_connection().await?;
     let model = file_in_zip::Entity::find()
-        .filter(Column::Status.eq("new"))
-        .filter(Column::Name.eq("new"))
+        .filter(Column::Status.eq("ready_to_process"))
         .one(&conn)
         .await?;
     Ok(model)
