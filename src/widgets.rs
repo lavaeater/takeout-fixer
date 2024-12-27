@@ -24,7 +24,6 @@ use takeout_zip::Model as TakeoutZip;
 use tokio::io::{AsyncWriteExt, BufReader};
 use tokio::{fs::File as TokioFile, task, time};
 use tokio_tar::{Archive, EntryType};
-use entity::prelude::FileInZip;
 
 #[derive(Debug, Clone)]
 pub struct FileListWidget {
@@ -482,7 +481,7 @@ impl FileListWidget {
         apply some metadata from a json on using the exif thingie. After having used that
         we can then move it to its proper place on the hard drive...
          */
-        let json = fetch_json_for_media_file(&media_file).await?;
+        let _json = fetch_json_for_media_file(&media_file).await?;
         /*
         
         Now we have the paths... what to do next? Read that goshdarn json and do stuff to it.
