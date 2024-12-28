@@ -501,7 +501,7 @@ impl FileListWidget {
         Now we have the paths... what to do next? Read that goshdarn
         json and do stuff to it.
          */
-        let file_content = tokio::fs::read_to_string(json_data.path).await?;
+        let file_content = tokio::fs::read_to_string(&json_data.path).await?;
         let metadata: PhotoMetadata = serde_json::from_str(&file_content)?;
 
         // Extract the timestamp
@@ -517,8 +517,8 @@ impl FileListWidget {
         tokio::fs::create_dir_all(&target_folder).await?;
         let json_path = target_folder.clone().join(&json_data.name);
         let media_path = target_folder.join(&media_file.name);
-        tokio::fs::rename(json_data.path, json_path).await?;
-        tokio::fs::rename(media_file.path, media_path).await?;
+        tokio::fs::rename(&json_data.path, &json_path).await?;
+        tokio::fs::rename(&media_file.path, &media_path).await?;
         
         let mut json_data = json_data.into_active_model(); 
         let mut media_file = media_file.into_active_model();
