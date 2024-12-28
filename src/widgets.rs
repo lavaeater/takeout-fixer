@@ -20,10 +20,24 @@ use sea_orm::{IntoActiveModel, TryIntoModel};
 use std::fmt::Debug;
 use std::sync::{Arc, RwLock, RwLockReadGuard};
 use std::time::Duration;
+use chrono::{DateTime, Datelike, NaiveDateTime, Utc};
+use serde::Deserialize;
 use takeout_zip::Model as TakeoutZip;
 use tokio::io::{AsyncWriteExt, BufReader};
 use tokio::{fs::File as TokioFile, task, time};
 use tokio_tar::{Archive, EntryType};
+
+
+#[derive(Debug, Deserialize)]
+struct PhotoMetadata {
+    photoTakenTime: PhotoTakenTime,
+}
+
+#[derive(Debug, Deserialize)]
+struct PhotoTakenTime {
+    timestamp: String,
+    formatted: String,
+}
 
 #[derive(Debug, Clone)]
 pub struct FileListWidget {
@@ -477,15 +491,44 @@ impl FileListWidget {
 
     async fn process_media_file(self, media_file: file_in_zip::Model) -> Result<()> {
         /*
-        Above all else, the media file is an image or a video file, etc, that we can
-        apply some metadata from a json on using the exif thingie. After having used that
-        we can then move it to its proper place on the hard drive...
+        Above all else, the media file is an image or a video file, etc,
+        that we can apply some metadata from a json on using the exif thingie.
+        After having used that we can then move it to its proper place on
+        the hard drive...
          */
-        let _json = fetch_json_for_media_file(&media_file).await?;
+        let json_data = fetch_json_for_media_file(&media_file).await?;
         /*
-        
-        Now we have the paths... what to do next? Read that goshdarn json and do stuff to it.
+        Now we have the paths... what to do next? Read that goshdarn
+        json and do stuff to it.
          */
+        let file_content = tokio::fs::read_to_string(json_data.path).await?;
+        let metadata: PhotoMetadata = serde_json::from_str(&file_content)?;
+
+        // Extract the timestamp
+        let timestamp: i64 = metadata.photoTakenTime.timestamp.parse()?; // Parse string to i64
+        
+        let datetime_utc = DateTime::from_timestamp(timestamp, 0)
+            .expect("Failed to convert timestamp to datetime");
+        let year = datetime_utc.year();
+        let month_name = datetime_utc.format("%B").to_string();
+        let day = datetime_utc.day();
+        
+        let target_folder = get_target_folder().join(format!("{}/{}/{}/", year, month_name,day));
+        tokio::fs::create_dir_all(&target_folder).await?;
+        let json_path = target_folder.clone().join(&json_data.name);
+        let media_path = target_folder.join(&media_file.name);
+        tokio::fs::rename(json_data.path, json_path).await?;
+        tokio::fs::rename(media_file.path, media_path).await?;
+        
+        let mut json_data = json_data.into_active_model(); 
+        let mut media_file = media_file.into_active_model();
+        json_data.status = Set("processed".to_string());
+        media_file.status = Set("processed".to_string());
+        json_data.path = Set(json_path.to_str().unwrap().to_owned());
+        media_file.path = Set(media_path.to_str().unwrap().to_owned());
+        
+        
+        
         Ok(())
     }
 
