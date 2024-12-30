@@ -1,7 +1,8 @@
-use crate::db::{create_file_in_zip, fetch_json_for_media_file, fetch_media_file_to_process, fetch_next_takeout, list_takeouts, set_file_types, store_file, update_file_in_zip, update_takeout_zip};
+use crate::db::{create_file_in_zip, create_media_file, fetch_json_for_media_file, fetch_media_file_to_process, fetch_next_takeout, list_takeouts, set_file_types, store_file, update_file_in_zip, update_takeout_zip};
 use crate::drive::{download, get_file_path, get_target_folder, list_google_drive};
 use anyhow::Result;
 use async_compression::tokio::bufread::GzipDecoder;
+use chrono::{DateTime, Datelike};
 use entity::{file_in_zip, takeout_zip};
 use futures::StreamExt;
 use google_drive::types::File as GoogleDriveFile;
@@ -17,11 +18,11 @@ use ratatui::widgets::{
 };
 use sea_orm::ActiveValue::Set;
 use sea_orm::{IntoActiveModel, TryIntoModel};
+use serde::Deserialize;
 use std::fmt::Debug;
 use std::sync::{Arc, RwLock, RwLockReadGuard};
 use std::time::Duration;
-use chrono::{DateTime, Datelike, NaiveDateTime, Utc};
-use serde::Deserialize;
+use serde_json::Value;
 use takeout_zip::Model as TakeoutZip;
 use tokio::io::{AsyncWriteExt, BufReader};
 use tokio::{fs::File as TokioFile, task, time};
@@ -30,7 +31,7 @@ use tokio_tar::{Archive, EntryType};
 
 #[derive(Debug, Deserialize)]
 struct PhotoMetadata {
-    photoTakenTime: PhotoTakenTime,
+    photo_taken_time: PhotoTakenTime,
 }
 
 #[derive(Debug, Deserialize)]
@@ -505,7 +506,7 @@ impl FileListWidget {
         let metadata: PhotoMetadata = serde_json::from_str(&file_content)?;
 
         // Extract the timestamp
-        let timestamp: i64 = metadata.photoTakenTime.timestamp.parse()?; // Parse string to i64
+        let timestamp: i64 = metadata.photo_taken_time.timestamp.parse()?; // Parse string to i64
         
         let datetime_utc = DateTime::from_timestamp(timestamp, 0)
             .expect("Failed to convert timestamp to datetime");
@@ -527,13 +528,19 @@ impl FileListWidget {
         json_file.path = Set(json_path.to_str().unwrap().to_owned());
         media_file.path = Set(media_path.to_str().unwrap().to_owned());
         
-        let _ = update_file_in_zip(json_file).await?;
-        let _ = update_file_in_zip(media_file).await?;
+        let json_file = update_file_in_zip(json_file).await?;
+        let media_file = update_file_in_zip(media_file).await?;
+
+        let file_content = tokio::fs::read_to_string(json_file.path).await?;
+        let raw_json: Value = serde_json::from_str(&file_content)?;
+        
+        let _ = create_media_file(&media_file.name, &media_file.path, &raw_json).await?;
+        
         Ok(())
     }
 
     async fn examine_zip_with_progress(self, takeout_zip: TakeoutZip) -> Result<()> {
-        let file = TokioFile::open(takeout_zip.local_path).await?;
+        let file = TokioFile::open(&takeout_zip.local_path).await?;
         let buf_reader = BufReader::new(file);
 
         // Create an asynchronous Gzip decoder
@@ -566,6 +573,10 @@ impl FileListWidget {
                 .await?;
             }
         }
+        tokio::fs::remove_file(&takeout_zip.local_path).await?;
+        let mut takeout_zip = takeout_zip.into_active_model();
+        takeout_zip.local_path = Set("".to_string());
+        update_takeout_zip(takeout_zip).await?;
         Ok(())
     }
 

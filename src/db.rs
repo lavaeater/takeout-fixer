@@ -2,12 +2,9 @@ use crate::widgets::DriveItem;
 use anyhow::Error;
 use anyhow::Result;
 use entity::takeout_zip::{ActiveModel as TakeoutZipActiveModel, Column, Model as TakeoutZip};
-use entity::{file_in_zip, takeout_zip};
+use entity::{file_in_zip, media_file, takeout_zip};
 use sea_orm::ActiveValue::Set;
-use sea_orm::{
-    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait,
-    IntoActiveModel, NotSet, QueryFilter, Statement,
-};
+use sea_orm::{ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait, IntoActiveModel, NotSet, QueryFilter, Statement};
 
 pub fn get_db_url() -> String {
     dotenv::var("DATABASE_URL").unwrap_or("sqlite::memory:".to_string())
@@ -168,4 +165,21 @@ pub async fn fetch_media_file_to_process(
 pub async fn update_file_in_zip(model: file_in_zip::ActiveModel) -> Result<file_in_zip::Model> {
     let conn = get_db_connection().await?;
     Ok(model.update(&conn).await?)
+}
+
+pub async fn create_media_file(
+    file_name: &str,
+    path: &str,
+    json_meta: &serde_json::Value,
+) -> Result<media_file::Model> {
+    let m = media_file::ActiveModel {
+        file_name: Set(file_name.to_owned()),
+        path: Set(path.to_owned()),
+        json_meta: Set(json_meta.clone()),
+        ..Default::default()
+    };
+    match m.insert(&get_db_connection().await?).await {
+        Ok(model) => Ok(model),
+        Err(e) => Err(Error::new(e)),
+    }
 }
