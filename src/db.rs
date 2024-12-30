@@ -164,3 +164,8 @@ pub async fn fetch_media_file_to_process(
         },
     }
 }
+
+pub async fn update_file_in_zip(model: file_in_zip::ActiveModel) -> Result<file_in_zip::Model> {
+    let conn = get_db_connection().await?;
+    Ok(model.update(&conn).await?)
+}

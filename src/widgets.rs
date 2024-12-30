@@ -1,4 +1,4 @@
-use crate::db::{create_file_in_zip, fetch_json_for_media_file, fetch_media_file_to_process, fetch_next_takeout, list_takeouts, set_file_types, store_file, update_takeout_zip};
+use crate::db::{create_file_in_zip, fetch_json_for_media_file, fetch_media_file_to_process, fetch_next_takeout, list_takeouts, set_file_types, store_file, update_file_in_zip, update_takeout_zip};
 use crate::drive::{download, get_file_path, get_target_folder, list_google_drive};
 use anyhow::Result;
 use async_compression::tokio::bufread::GzipDecoder;
@@ -520,15 +520,15 @@ impl FileListWidget {
         tokio::fs::rename(&json_data.path, &json_path).await?;
         tokio::fs::rename(&media_file.path, &media_path).await?;
         
-        let mut json_data = json_data.into_active_model(); 
+        let mut json_file = json_data.into_active_model(); 
         let mut media_file = media_file.into_active_model();
-        json_data.status = Set("processed".to_string());
+        json_file.status = Set("processed".to_string());
         media_file.status = Set("processed".to_string());
-        json_data.path = Set(json_path.to_str().unwrap().to_owned());
+        json_file.path = Set(json_path.to_str().unwrap().to_owned());
         media_file.path = Set(media_path.to_str().unwrap().to_owned());
         
-        
-        
+        let _ = update_file_in_zip(json_file).await?;
+        let _ = update_file_in_zip(media_file).await?;
         Ok(())
     }
 
