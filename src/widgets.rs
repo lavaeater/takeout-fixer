@@ -1,4 +1,8 @@
-use crate::db::{create_file_in_zip, create_media_file, fetch_json_for_media_file, fetch_media_file_to_process, fetch_next_takeout, list_takeouts, set_file_types, store_file, update_file_in_zip, update_takeout_zip};
+use crate::db::{
+    create_file_in_zip, create_media_file, fetch_json_for_media_file, fetch_media_file_to_process,
+    fetch_next_takeout, list_takeouts, set_file_types, store_file, update_file_in_zip,
+    update_takeout_zip,
+};
 use crate::drive::{download, get_file_path, get_target_folder, list_google_drive};
 use anyhow::Result;
 use async_compression::tokio::bufread::GzipDecoder;
@@ -19,15 +23,15 @@ use ratatui::widgets::{
 use sea_orm::ActiveValue::Set;
 use sea_orm::{IntoActiveModel, TryIntoModel};
 use serde::Deserialize;
+use serde_json::Value;
+use std::collections::HashMap;
 use std::fmt::Debug;
 use std::sync::{Arc, RwLock, RwLockReadGuard};
 use std::time::Duration;
-use serde_json::Value;
 use takeout_zip::Model as TakeoutZip;
 use tokio::io::{AsyncWriteExt, BufReader};
 use tokio::{fs::File as TokioFile, task, time};
 use tokio_tar::{Archive, EntryType};
-
 
 #[derive(Debug, Deserialize)]
 struct PhotoMetadata {
@@ -69,7 +73,8 @@ pub struct FileListState {
     downloading_task_count: u8,
     examination_task_count: u8,
     file_process_task_count: u8,
-    max_task_count: u8
+    max_task_count: u8,
+    progress_hash: HashMap<String, (String, f64)>,
 }
 
 impl Default for FileListState {
@@ -87,7 +92,8 @@ impl Default for FileListState {
             downloading_task_count: 0,
             examination_task_count: 0,
             file_process_task_count: 0,
-            max_task_count: 3
+            max_task_count: 1,
+            progress_hash: HashMap::new(),
         }
     }
 }
@@ -287,11 +293,22 @@ impl FileListWidget {
             state.file_name = file_name.to_string();
         }
     }
-    
+
+    pub fn update_item_progress(&self, item: &str, task: &str, progress: f64) {
+        if let Ok(mut state) = self.state.write() {
+            state
+                .progress_hash
+                .insert(item.to_string(), (task.to_string(), progress));
+            if state.progress_hash.get(item).unwrap().1 >= 1.0 {
+                state.progress_hash.remove(item);
+            }
+        }
+    }
+
     pub fn get_read_state(&self) -> RwLockReadGuard<'_, FileListState> {
         self.state.read().unwrap()
     }
-    
+
     pub fn get_write_state(&self) -> std::sync::RwLockWriteGuard<'_, FileListState> {
         self.state.write().unwrap()
     }
@@ -330,14 +347,14 @@ impl FileListWidget {
         let state = self.get_read_state();
         state.file_process_task_count < state.max_task_count * 4
     }
-    
+
     pub fn start_download(&self) {
         let mut state = self.get_write_state();
         if state.downloading_task_count < state.max_task_count {
             state.downloading_task_count += 1;
         }
     }
-    
+
     pub fn finish_download(&self) {
         let mut state = self.get_write_state();
         if state.downloading_task_count > 0 {
@@ -350,21 +367,19 @@ impl FileListWidget {
         state.downloading_task_count < state.max_task_count
     }
 
-
     pub fn start_examination(&self) {
         let mut state = self.get_write_state();
         if state.examination_task_count < state.max_task_count {
             state.examination_task_count += 1;
         }
     }
-    
+
     pub fn finish_examination(&self) {
         let mut state = self.get_write_state();
         if state.examination_task_count > 0 {
             state.examination_task_count -= 1;
         }
     }
-
 
     pub fn can_examine(&self) -> bool {
         let state = self.get_read_state();
@@ -434,7 +449,7 @@ impl FileListWidget {
                                 item.status = Set("processed_zip".to_string());
                             }
                             Err(err) => {
-                                item.status = Set(format!("{} - processing_failed",err));
+                                item.status = Set(format!("{} - processing_failed", err));
                             }
                         }
                         update_takeout_zip(item).await.unwrap();
@@ -442,11 +457,11 @@ impl FileListWidget {
                     });
                 }
             }
-            
+
             task::spawn(async {
                 set_file_types().await.unwrap();
             });
-            
+
             if self.can_process_file() {
                 if let Ok(Some(item)) =
                     fetch_media_file_to_process("ready_to_process", Some("processing")).await
@@ -456,17 +471,14 @@ impl FileListWidget {
 
                     task::spawn(async move {
                         let later = this.clone();
-                        match this
-                            .process_media_file(item.clone())
-                            .await
-                        {
+                        match this.process_media_file(item.clone()).await {
                             Ok(_) => {
                                 let mut item = item.into_active_model();
                                 item.status = Set("processed".to_string());
                             }
                             Err(err) => {
                                 let mut item = item.into_active_model();
-                                item.status = Set(format!("{} - processing_failed",err));
+                                item.status = Set(format!("{} - processing_failed", err));
                             }
                         }
                         later.finish_processing_file();
@@ -507,70 +519,79 @@ impl FileListWidget {
 
         // Extract the timestamp
         let timestamp: i64 = metadata.photo_taken_time.timestamp.parse()?; // Parse string to i64
-        
+
         let datetime_utc = DateTime::from_timestamp(timestamp, 0)
             .expect("Failed to convert timestamp to datetime");
         let year = datetime_utc.year();
         let month_name = datetime_utc.format("%B").to_string();
         let day = datetime_utc.day();
-        
-        let target_folder = get_target_folder().join(format!("{}/{}/{}/", year, month_name,day));
+
+        let target_folder = get_target_folder().join(format!("{}/{}/{}/", year, month_name, day));
         tokio::fs::create_dir_all(&target_folder).await?;
         let json_path = target_folder.clone().join(&json_data.name);
         let media_path = target_folder.join(&media_file.name);
         tokio::fs::rename(&json_data.path, &json_path).await?;
         tokio::fs::rename(&media_file.path, &media_path).await?;
-        
-        let mut json_file = json_data.into_active_model(); 
+
+        let mut json_file = json_data.into_active_model();
         let mut media_file = media_file.into_active_model();
         json_file.status = Set("processed".to_string());
         media_file.status = Set("processed".to_string());
         json_file.path = Set(json_path.to_str().unwrap().to_owned());
         media_file.path = Set(media_path.to_str().unwrap().to_owned());
-        
+
         let json_file = update_file_in_zip(json_file).await?;
         let media_file = update_file_in_zip(media_file).await?;
 
         let file_content = tokio::fs::read_to_string(json_file.path).await?;
         let raw_json: Value = serde_json::from_str(&file_content)?;
-        
+
         let _ = create_media_file(&media_file.name, &media_file.path, &raw_json).await?;
-        
+        self.update_item_progress(&media_file.name, "processing", 0.5);
+
         Ok(())
     }
 
     async fn examine_zip_with_progress(self, takeout_zip: TakeoutZip) -> Result<()> {
         let file = TokioFile::open(&takeout_zip.local_path).await?;
         let buf_reader = BufReader::new(file);
-
         // Create an asynchronous Gzip decoder
         let decoder = GzipDecoder::new(buf_reader);
         let mut archive = Archive::new(decoder);
         let mut entries = archive.entries()?;
         let target_folder = get_target_folder();
+        let mut count = 0;
         while let Some(file) = entries.next().await {
             let mut entry = file?;
             let full_path = target_folder.clone().join(&entry.path()?).into_boxed_path();
             // Check the type of entry
             // Check the type of entry
             if entry.header().entry_type() == EntryType::Regular {
+                count += 1;
                 // Ensure parent directories exist
                 if let Some(parent) = full_path.parent() {
                     tokio::fs::create_dir_all(parent).await?;
                 }
                 /*
-                 Modify so we first extract this file to where it is supposed to be, 
-                 then we add the data for the file to the database
-                 */
+                Modify so we first extract this file to where it is supposed to be,
+                then we add the data for the file to the database
+                */
                 let mut output_file = tokio::fs::File::create(&full_path).await?;
                 tokio::io::copy(&mut entry, &mut output_file).await?;
 
                 let _file_in_zip = create_file_in_zip(
                     takeout_zip.id,
-                    entry.path()?.file_name().unwrap().to_str().unwrap().to_owned(),
+                    entry
+                        .path()?
+                        .file_name()
+                        .unwrap()
+                        .to_str()
+                        .unwrap()
+                        .to_owned(),
                     full_path.to_str().unwrap().to_owned(),
                 )
                 .await?;
+                self.update_item_progress(&takeout_zip.name, "unzipping", (count as f64) / 100.0);
             }
         }
         tokio::fs::remove_file(&takeout_zip.local_path).await?;
@@ -594,7 +615,7 @@ impl FileListWidget {
                 .await?;
             while let Some(chunk) = response.chunk().await? {
                 written += async_file.write(chunk.as_ref()).await?;
-                self.update_file_progress(&name, written as f64 / size as f64);
+                self.update_item_progress(&name, "downloading", written as f64 / size as f64);
             }
             self.finish_download();
             Ok(local_path.to_str().unwrap().to_string())
@@ -606,21 +627,13 @@ impl FileListWidget {
 
     fn render_status(&mut self, area: Rect, buf: &mut Buffer) {
         let state = self.state.read().unwrap();
-        let info = if state.loading_state == LoadingState::Downloading {
-            format!(
-                "Downloading: {}, {:.2}%",
-                state.file_name,
-                state.progress * 100.0
-            )
-        } else if state.loading_state == LoadingState::Processing {
-            format!(
-                "Processing: {}, {:.2}%",
-                state.file_name,
-                state.progress * 100.0
-            )
-        } else {
-            format!("Status: {:?}", state.loading_state)
-        };
+        let info = state.progress_hash.iter().fold(String::new(), |mut acc, (key, (task, progress))| {
+            acc = format!(
+                "{}\n{}: {}, {:.2}%",acc,
+                task, key, progress * 100.0
+            );
+            acc
+        });
         // We show the list item's info under the list in this paragraph
         let block = Block::new()
             .title(Line::raw("Status").centered())
@@ -716,7 +729,7 @@ impl FileListWidget {
         .areas(area);
 
         let [list_area, status_area] =
-            Layout::vertical([Constraint::Fill(1), Constraint::Length(3)]).areas(main_area);
+            Layout::vertical([Constraint::Fill(1), Constraint::Length(5)]).areas(main_area);
 
         render_header(header_area, buf);
         render_processing_footer(footer_area, buf);
