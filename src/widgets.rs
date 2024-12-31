@@ -575,7 +575,11 @@ impl FileListWidget {
         }
         
         let mut count = 0;
-        
+        let file = TokioFile::open(&takeout_zip.local_path).await?;
+        let buf_reader = BufReader::new(file);
+        // Create an asynchronous Gzip decoder
+        let decoder = GzipDecoder::new(buf_reader);
+        let mut archive = Archive::new(decoder);
         let mut entries = archive.entries()?;
         while let Some(file) = entries.next().await {
             let mut entry = file?;
