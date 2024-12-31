@@ -92,7 +92,7 @@ impl Default for FileListState {
             downloading_task_count: 0,
             examination_task_count: 0,
             file_process_task_count: 0,
-            max_task_count: 1,
+            max_task_count: 5,
             progress_hash: HashMap::new(),
         }
     }
