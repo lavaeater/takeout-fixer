@@ -1,10 +1,11 @@
+use std::time::Duration;
 use crate::widgets::DriveItem;
 use anyhow::Error;
 use anyhow::Result;
 use entity::takeout_zip::{ActiveModel as TakeoutZipActiveModel, Column, Model as TakeoutZip};
 use entity::{file_in_zip, media_file, takeout_zip};
 use sea_orm::ActiveValue::Set;
-use sea_orm::{ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait, IntoActiveModel, NotSet, QueryFilter, Statement};
+use sea_orm::{ActiveModelTrait, ColumnTrait, ConnectOptions, ConnectionTrait, DatabaseConnection, EntityTrait, IntoActiveModel, NotSet, QueryFilter, Statement};
 
 pub fn get_db_url() -> String {
     dotenv::var("DATABASE_URL").unwrap_or("sqlite::memory:".to_string())
@@ -12,7 +13,15 @@ pub fn get_db_url() -> String {
 
 async fn get_db_connection() -> Result<DatabaseConnection> {
     let db_url = get_db_url();
-    match sea_orm::Database::connect(&db_url).await {
+
+    let mut opt = ConnectOptions::new(db_url);
+    opt.max_connections(15)
+        .min_connections(5)
+        .connect_timeout(Duration::from_secs(8))
+        .acquire_timeout(Duration::from_secs(8))
+        .idle_timeout(Duration::from_secs(8))
+        .max_lifetime(Duration::from_secs(8)); 
+    match sea_orm::Database::connect(opt).await {
         Ok(db_conn) => Ok(db_conn),
         Err(e) => Err(Error::new(e)),
     }

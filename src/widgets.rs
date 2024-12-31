@@ -73,6 +73,7 @@ pub struct FileListState {
     downloading_task_count: u8,
     examination_task_count: u8,
     file_process_task_count: u8,
+    can_set_file_types: bool,
     max_task_count: u8,
     progress_hash: HashMap<String, (String, f64)>,
 }
@@ -94,6 +95,7 @@ impl Default for FileListState {
             file_process_task_count: 0,
             max_task_count: 3,
             progress_hash: HashMap::new(),
+            can_set_file_types: true,
         }
     }
 }
@@ -130,7 +132,7 @@ pub enum UiActions {
     Quit,
 }
 
-const MAX_PROCESS_MULTIPLIER: u8 = 1;
+const MAX_PROCESS_MULTIPLIER: u8 = 4;
 
 impl FileListWidget {
     /// Start fetching the pull requests in the background.
@@ -365,7 +367,7 @@ impl FileListWidget {
 
     pub fn can_download(&self) -> bool {
         let state = self.get_read_state();
-        state.downloading_task_count < state.max_task_count
+        state.downloading_task_count < state.max_task_count 
     }
 
     pub fn start_examination(&self) {
@@ -385,6 +387,21 @@ impl FileListWidget {
     pub fn can_examine(&self) -> bool {
         let state = self.get_read_state();
         state.examination_task_count < state.max_task_count
+    }
+
+    pub fn start_set_file_types(&self) {
+        let mut state = self.get_write_state();
+        state.can_set_file_types = false;
+    }
+
+    pub fn finish_set_file_types(&self) {
+        let mut state = self.get_write_state();
+        state.can_set_file_types = true;
+    }
+
+    pub fn can_set_file_types(&self) -> bool {
+        let state = self.get_read_state();
+        state.can_set_file_types
     }
 
     pub fn start_processing(&self) {
@@ -458,10 +475,12 @@ impl FileListWidget {
                     });
                 }
             }
-
-            task::spawn(async {
-                set_file_types().await.unwrap();
-            });
+            
+            if self.can_examine() {
+                task::spawn(async {
+                    set_file_types().await.unwrap();
+                });
+            }
 
             if self.can_process_file() {
                 if let Ok(Some(item)) =
