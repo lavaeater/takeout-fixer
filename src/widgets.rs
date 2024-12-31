@@ -104,7 +104,6 @@ enum LoadingState {
     Idle,
     Loading,
     Loaded,
-    Downloading,
     Processing,
     Error(String),
 }
@@ -494,6 +493,7 @@ impl FileListWidget {
     }
 
     async fn process_media_file(self, media_file: file_in_zip::Model) -> Result<()> {
+        self.update_item_progress(&media_file.name, "processing", 0.1);
         /*
         Above all else, the media file is an image or a video file, etc,
         that we can apply some metadata from a json on using the exif thingie.
@@ -507,6 +507,7 @@ impl FileListWidget {
          */
         let file_content = tokio::fs::read_to_string(&json_data.path).await?;
         let metadata: PhotoMetadata = serde_json::from_str(&file_content)?;
+        self.update_item_progress(&media_file.name, "processing", 0.3);
 
         // Extract the timestamp
         let timestamp: i64 = metadata.photoTakenTime.timestamp.parse()?; // Parse string to i64
@@ -521,8 +522,14 @@ impl FileListWidget {
         tokio::fs::create_dir_all(&target_folder).await?;
         let json_path = target_folder.clone().join(&json_data.name);
         let media_path = target_folder.join(&media_file.name);
+        self.update_item_progress(&media_file.name, "processing", 0.4);
+
         tokio::fs::rename(&json_data.path, &json_path).await?;
+        self.update_item_progress(&media_file.name, "processing", 0.5);
+
         tokio::fs::rename(&media_file.path, &media_path).await?;
+        self.update_item_progress(&media_file.name, "processing", 0.6);
+
 
         let mut json_file = json_data.into_active_model();
         let mut media_file = media_file.into_active_model();
@@ -533,12 +540,17 @@ impl FileListWidget {
 
         let json_file = update_file_in_zip(json_file).await?;
         let media_file = update_file_in_zip(media_file).await?;
+        self.update_item_progress(&media_file.name, "processing", 0.7);
 
         let file_content = tokio::fs::read_to_string(json_file.path).await?;
+        self.update_item_progress(&media_file.name, "processing", 0.8);
+
         let raw_json: Value = serde_json::from_str(&file_content)?;
+        self.update_item_progress(&media_file.name, "processing", 0.9);
 
         let _ = create_media_file(&media_file.name, &media_file.path, &raw_json).await?;
-        self.update_item_progress(&media_file.name, "processing", 0.5);
+        self.update_item_progress(&media_file.name, "processing", 1.0);
+
 
         Ok(())
     }
@@ -551,7 +563,18 @@ impl FileListWidget {
         let mut archive = Archive::new(decoder);
         let mut entries = archive.entries()?;
         let target_folder = get_target_folder();
+        let mut total = 0;
+        // count all...
+        while let Some(file) = entries.next().await {
+            let entry = file?;
+            if entry.header().entry_type() == EntryType::Regular {
+                total += 1;
+            }
+        }
+        
         let mut count = 0;
+        
+        let mut entries = archive.entries()?;
         while let Some(file) = entries.next().await {
             let mut entry = file?;
             let full_path = target_folder.clone().join(&entry.path()?).into_boxed_path();
@@ -582,7 +605,12 @@ impl FileListWidget {
                     full_path.to_str().unwrap().to_owned(),
                 )
                 .await?;
-                self.update_item_progress(&takeout_zip.name, "unzipping", (count as f64) / 100.0);
+                let progress = if total > 0 {
+                    (count as f64 / total as f64).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                };
+                self.update_item_progress(&takeout_zip.name, "unzipping", progress);
             }
         }
         tokio::fs::remove_file(&takeout_zip.local_path).await?;
