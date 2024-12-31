@@ -777,7 +777,7 @@ impl FileListWidget {
         .areas(area);
 
         let [list_area, status_area] =
-            Layout::vertical([Constraint::Fill(1), Constraint::Length(10)]).areas(main_area);
+            Layout::vertical([Constraint::Fill(1), Constraint::Length(20)]).areas(main_area);
 
         render_header(header_area, buf);
         render_processing_footer(footer_area, buf);
@@ -794,7 +794,7 @@ impl FileListWidget {
         .areas(area);
 
         let [list_area, status_area] =
-            Layout::vertical([Constraint::Fill(1), Constraint::Length(10)]).areas(main_area);
+            Layout::vertical([Constraint::Fill(1), Constraint::Length(20)]).areas(main_area);
 
         render_header(header_area, buf);
         render_file_footer(footer_area, buf);
