@@ -35,7 +35,7 @@ use tokio_tar::{Archive, EntryType};
 
 #[derive(Debug, Deserialize)]
 struct PhotoMetadata {
-    photo_taken_time: PhotoTakenTime,
+    photoTakenTime: PhotoTakenTime,
 }
 
 #[derive(Debug, Deserialize)]
@@ -471,16 +471,7 @@ impl FileListWidget {
 
                     task::spawn(async move {
                         let later = this.clone();
-                        match this.process_media_file(item.clone()).await {
-                            Ok(_) => {
-                                let mut item = item.into_active_model();
-                                item.status = Set("processed".to_string());
-                            }
-                            Err(err) => {
-                                let mut item = item.into_active_model();
-                                item.status = Set(format!("{} - processing_failed", err));
-                            }
-                        }
+                        this.process_media_file(item.clone()).await.expect("Did not work, mate.");
                         later.finish_processing_file();
                     });
                 }
@@ -518,7 +509,7 @@ impl FileListWidget {
         let metadata: PhotoMetadata = serde_json::from_str(&file_content)?;
 
         // Extract the timestamp
-        let timestamp: i64 = metadata.photo_taken_time.timestamp.parse()?; // Parse string to i64
+        let timestamp: i64 = metadata.photoTakenTime.timestamp.parse()?; // Parse string to i64
 
         let datetime_utc = DateTime::from_timestamp(timestamp, 0)
             .expect("Failed to convert timestamp to datetime");
