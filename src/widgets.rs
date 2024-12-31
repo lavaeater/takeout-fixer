@@ -92,7 +92,7 @@ impl Default for FileListState {
             downloading_task_count: 0,
             examination_task_count: 0,
             file_process_task_count: 0,
-            max_task_count: 5,
+            max_task_count: 3,
             progress_hash: HashMap::new(),
         }
     }
@@ -129,6 +129,8 @@ pub enum UiActions {
     SwitchView,
     Quit,
 }
+
+const MAX_PROCESS_MULTIPLIER: u8 = 4;
 
 impl FileListWidget {
     /// Start fetching the pull requests in the background.
@@ -330,7 +332,7 @@ impl FileListWidget {
 
     pub fn start_processing_file(&self) {
         let mut state = self.get_write_state();
-        if state.file_process_task_count < state.max_task_count * 4 {
+        if state.file_process_task_count < state.max_task_count * MAX_PROCESS_MULTIPLIER {
             state.file_process_task_count += 1;
         }
     }
@@ -344,7 +346,7 @@ impl FileListWidget {
 
     pub fn can_process_file(&self) -> bool {
         let state = self.get_read_state();
-        state.file_process_task_count < state.max_task_count * 4
+        state.file_process_task_count < state.max_task_count * MAX_PROCESS_MULTIPLIER
     }
 
     pub fn start_download(&self) {
