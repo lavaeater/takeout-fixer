@@ -74,7 +74,9 @@ pub struct FileListState {
     examination_task_count: u8,
     file_process_task_count: u8,
     can_set_file_types: bool,
-    max_task_count: u8,
+    max_downloading_task_count: u8,
+    max_examination_task_count: u8,
+    max_file_processing_task_count: u8,
     progress_hash: HashMap<String, (String, f64)>,
 }
 
@@ -93,7 +95,9 @@ impl Default for FileListState {
             downloading_task_count: 0,
             examination_task_count: 0,
             file_process_task_count: 0,
-            max_task_count: 3,
+            max_downloading_task_count: 5,
+            max_examination_task_count: 1,
+            max_file_processing_task_count: 10,
             progress_hash: HashMap::new(),
             can_set_file_types: true,
         }
@@ -334,7 +338,7 @@ impl FileListWidget {
 
     pub fn start_processing_file(&self) {
         let mut state = self.get_write_state();
-        if state.file_process_task_count < state.max_task_count * MAX_PROCESS_MULTIPLIER {
+        if state.file_process_task_count < state.max_file_processing_task_count {
             state.file_process_task_count += 1;
         }
     }
@@ -348,12 +352,12 @@ impl FileListWidget {
 
     pub fn can_process_file(&self) -> bool {
         let state = self.get_read_state();
-        state.file_process_task_count < state.max_task_count * MAX_PROCESS_MULTIPLIER
+        state.file_process_task_count < state.max_file_processing_task_count
     }
 
     pub fn start_download(&self) {
         let mut state = self.get_write_state();
-        if state.downloading_task_count < state.max_task_count {
+        if state.downloading_task_count < state.max_downloading_task_count {
             state.downloading_task_count += 1;
         }
     }
@@ -367,12 +371,12 @@ impl FileListWidget {
 
     pub fn can_download(&self) -> bool {
         let state = self.get_read_state();
-        state.downloading_task_count < state.max_task_count 
+        state.downloading_task_count < state.max_downloading_task_count 
     }
 
     pub fn start_examination(&self) {
         let mut state = self.get_write_state();
-        if state.examination_task_count < state.max_task_count {
+        if state.examination_task_count < state.max_examination_task_count {
             state.examination_task_count += 1;
         }
     }
@@ -386,7 +390,7 @@ impl FileListWidget {
 
     pub fn can_examine(&self) -> bool {
         let state = self.get_read_state();
-        state.examination_task_count < state.max_task_count
+        state.examination_task_count < state.max_examination_task_count
     }
 
     pub fn start_set_file_types(&self) {
