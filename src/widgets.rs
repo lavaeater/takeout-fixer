@@ -130,7 +130,7 @@ pub enum UiActions {
     Quit,
 }
 
-const MAX_PROCESS_MULTIPLIER: u8 = 4;
+const MAX_PROCESS_MULTIPLIER: u8 = 1;
 
 impl FileListWidget {
     /// Start fetching the pull requests in the background.
