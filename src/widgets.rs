@@ -1,7 +1,7 @@
 use crate::db::{
-    create_file_in_zip, create_media_file, fetch_json_for_media_file, fetch_media_file_to_process,
-    fetch_next_takeout, list_takeouts, set_file_types, store_file, update_file_in_zip,
-    update_takeout_zip,
+    check_number_of_downloaded_takeouts, create_file_in_zip, create_media_file,
+    fetch_json_for_media_file, fetch_media_file_to_process, fetch_next_takeout, list_takeouts,
+    set_file_types, store_file, update_file_in_zip, update_takeout_zip,
 };
 use crate::drive::{download, get_file_path, get_target_folder, list_google_drive};
 use anyhow::Result;
@@ -78,6 +78,7 @@ pub struct FileListState {
     max_examination_task_count: u8,
     max_file_processing_task_count: u8,
     progress_hash: HashMap<String, (String, f64)>,
+    pub max_downloaded_zip_files: i32,
 }
 
 impl Default for FileListState {
@@ -95,11 +96,12 @@ impl Default for FileListState {
             downloading_task_count: 0,
             examination_task_count: 0,
             file_process_task_count: 0,
-            max_downloading_task_count: 5,
-            max_examination_task_count: 1,
-            max_file_processing_task_count: 10,
+            max_downloading_task_count: 3,
+            max_examination_task_count: 6,
+            max_file_processing_task_count: 3,
             progress_hash: HashMap::new(),
             can_set_file_types: true,
+            max_downloaded_zip_files: 10,
         }
     }
 }
@@ -284,6 +286,10 @@ impl FileListWidget {
         self.get_write_state().loading_state = state;
     }
 
+    fn get_max_number_of_downloaded(&self) -> i32 {
+        self.get_read_state().max_downloaded_zip_files
+    }
+
     fn set_view_state(&self, state: FileListWidgetViewState) {
         self.get_write_state().view_state = state;
     }
@@ -371,7 +377,7 @@ impl FileListWidget {
 
     pub fn can_download(&self) -> bool {
         let state = self.get_read_state();
-        state.downloading_task_count < state.max_downloading_task_count 
+        state.downloading_task_count < state.max_downloading_task_count
     }
 
     pub fn start_examination(&self) {
@@ -426,8 +432,9 @@ impl FileListWidget {
             interval.tick().await; // Wait before each poll
 
             // Check for "new" items
-            if self.can_download() {
-                if let Ok(Some(mut item)) = fetch_next_takeout("new", Some("downloading")).await {
+            if self.can_download() && check_number_of_downloaded_takeouts(self.get_max_number_of_downloaded()).await.unwrap() {
+                if let Ok(Some(mut item)) = fetch_next_takeout("new", Some("downloading")).await
+                {
                     self.start_download();
                     let this = self.clone();
 
@@ -469,17 +476,18 @@ impl FileListWidget {
                         {
                             Ok(_) => {
                                 item.status = Set("processed_zip".to_string());
+                                later.finish_examination();
                             }
                             Err(err) => {
                                 item.status = Set(format!("{} - processing_failed", err));
+                                later.finish_examination();
                             }
                         }
                         update_takeout_zip(item).await.unwrap();
-                        later.finish_examination();
                     });
                 }
             }
-            
+
             if self.can_examine() {
                 task::spawn(async {
                     set_file_types().await.unwrap();
@@ -495,8 +503,15 @@ impl FileListWidget {
 
                     task::spawn(async move {
                         let later = this.clone();
-                        this.process_media_file(item.clone()).await.expect("Did not work, mate.");
-                        later.finish_processing_file();
+
+                        match this.process_media_file(item.clone()).await {
+                            Ok(_) => {
+                                later.finish_processing_file();
+                            }
+                            Err(_) => {
+                                later.finish_processing_file();
+                            }
+                        } //wrong, must always finish, mate.
                     });
                 }
             }
@@ -555,7 +570,6 @@ impl FileListWidget {
         tokio::fs::rename(&media_file.path, &media_path).await?;
         self.update_item_progress(&media_file.name, "processing", 0.6);
 
-
         let mut json_file = json_data.into_active_model();
         let mut media_file = media_file.into_active_model();
         json_file.status = Set("processed".to_string());
@@ -576,7 +590,6 @@ impl FileListWidget {
         let _ = create_media_file(&media_file.name, &media_file.path, &raw_json).await?;
         self.update_item_progress(&media_file.name, "processing", 1.0);
 
-
         Ok(())
     }
 
@@ -596,7 +609,7 @@ impl FileListWidget {
                 total += 1;
             }
         }
-        
+
         let mut count = 0;
         let file = TokioFile::open(&takeout_zip.local_path).await?;
         let buf_reader = BufReader::new(file);
@@ -675,13 +688,14 @@ impl FileListWidget {
 
     fn render_status(&mut self, area: Rect, buf: &mut Buffer) {
         let state = self.state.read().unwrap();
-        let info = state.progress_hash.iter().fold(String::new(), |mut acc, (key, (task, progress))| {
-            acc = format!(
-                "{}\n{}: {}, {:.2}%",acc,
-                task, key, progress * 100.0
-            );
-            acc
-        });
+        let info =
+            state
+                .progress_hash
+                .iter()
+                .fold(String::new(), |mut acc, (key, (task, progress))| {
+                    acc = format!("{}\n{}: {}, {:.2}%", acc, task, key, progress * 100.0);
+                    acc
+                });
         // We show the list item's info under the list in this paragraph
         let block = Block::new()
             .title(Line::raw("Status").centered())
