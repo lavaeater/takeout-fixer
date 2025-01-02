@@ -133,7 +133,6 @@ pub async fn set_file_types() -> Result<()> {
       AND media.status = 'new'
       AND media.json_id IS NULL
       AND json.file_type = 'json'
-      AND json.takeout_zip_id = media.takeout_zip_id
       AND json.name = CONCAT(media.name, '.json');
 "#;
 

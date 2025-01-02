@@ -98,7 +98,7 @@ impl Default for FileListState {
             file_process_task_count: 0,
             max_downloading_task_count: 3,
             max_examination_task_count: 6,
-            max_file_processing_task_count: 3,
+            max_file_processing_task_count: 10,
             progress_hash: HashMap::new(),
             can_set_file_types: true,
             max_downloaded_zip_files: 10,
@@ -426,73 +426,73 @@ impl FileListWidget {
 
     async fn start_processing_pipeline(self) {
         self.set_loading_state(LoadingState::Processing);
-        let mut interval = time::interval(Duration::from_millis(100)); // Poll every 3 seconds
+        let mut interval = time::interval(Duration::from_millis(1)); // Poll every 3 seconds
 
         while self.is_processing() {
             interval.tick().await; // Wait before each poll
 
             // Check for "new" items
-            if self.can_download() && check_number_of_downloaded_takeouts(self.get_max_number_of_downloaded()).await.unwrap() {
-                if let Ok(Some(mut item)) = fetch_next_takeout("new", Some("downloading")).await
-                {
-                    self.start_download();
-                    let this = self.clone();
-
-                    task::spawn(async move {
-                        // Simulate processing for "new" items
-                        match this
-                            .download_to_disk_with_progress(DriveItem::File(
-                                item.drive_id.clone().unwrap(),
-                                item.name.clone().unwrap(),
-                            ))
-                            .await
-                        {
-                            Ok(path) => {
-                                item.status = Set("downloaded".to_string());
-                                item.local_path = Set(path.clone());
-                            }
-                            Err(_) => {
-                                item.status = Set("download_failed".to_string());
-                            }
-                        }
-                        update_takeout_zip(item).await.unwrap();
-                    });
-                }
-            }
-
-            // Check for "downloaded" items
-            if self.can_examine() {
-                if let Ok(Some(mut item)) =
-                    fetch_next_takeout("downloaded", Some("processing_zip")).await
-                {
-                    self.start_examination();
-                    let this = self.clone();
-
-                    task::spawn(async move {
-                        let later = this.clone();
-                        match this
-                            .examine_zip_with_progress(item.clone().try_into_model().unwrap())
-                            .await
-                        {
-                            Ok(_) => {
-                                item.status = Set("processed_zip".to_string());
-                                later.finish_examination();
-                            }
-                            Err(err) => {
-                                item.status = Set(format!("{} - processing_failed", err));
-                                later.finish_examination();
-                            }
-                        }
-                        update_takeout_zip(item).await.unwrap();
-                    });
-                }
-            }
-
-            if self.can_examine() {
-                task::spawn(async {
-                    set_file_types().await.unwrap();
-                });
-            }
+            // if self.can_download() && check_number_of_downloaded_takeouts(self.get_max_number_of_downloaded()).await.unwrap() {
+            //     if let Ok(Some(mut item)) = fetch_next_takeout("new", Some("downloading")).await
+            //     {
+            //         self.start_download();
+            //         let this = self.clone();
+            // 
+            //         task::spawn(async move {
+            //             // Simulate processing for "new" items
+            //             match this
+            //                 .download_to_disk_with_progress(DriveItem::File(
+            //                     item.drive_id.clone().unwrap(),
+            //                     item.name.clone().unwrap(),
+            //                 ))
+            //                 .await
+            //             {
+            //                 Ok(path) => {
+            //                     item.status = Set("downloaded".to_string());
+            //                     item.local_path = Set(path.clone());
+            //                 }
+            //                 Err(_) => {
+            //                     item.status = Set("download_failed".to_string());
+            //                 }
+            //             }
+            //             update_takeout_zip(item).await.unwrap();
+            //         });
+            //     }
+            // }
+            // 
+            // // Check for "downloaded" items
+            // if self.can_examine() {
+            //     if let Ok(Some(mut item)) =
+            //         fetch_next_takeout("downloaded", Some("processing_zip")).await
+            //     {
+            //         self.start_examination();
+            //         let this = self.clone();
+            // 
+            //         task::spawn(async move {
+            //             let later = this.clone();
+            //             match this
+            //                 .examine_zip_with_progress(item.clone().try_into_model().unwrap())
+            //                 .await
+            //             {
+            //                 Ok(_) => {
+            //                     item.status = Set("processed_zip".to_string());
+            //                     later.finish_examination();
+            //                 }
+            //                 Err(err) => {
+            //                     item.status = Set(format!("{} - processing_failed", err));
+            //                     later.finish_examination();
+            //                 }
+            //             }
+            //             update_takeout_zip(item).await.unwrap();
+            //         });
+            //     }
+            // }
+            // 
+            // if self.can_examine() {
+            //     task::spawn(async {
+            //         set_file_types().await.unwrap();
+            //     });
+            // }
 
             if self.can_process_file() {
                 if let Ok(Some(item)) =
