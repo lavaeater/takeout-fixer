@@ -3,4 +3,5 @@
 pub mod prelude;
 
 pub mod file_in_zip;
+pub mod media_file;
 pub mod takeout_zip;

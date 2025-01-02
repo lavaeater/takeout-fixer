@@ -11,6 +11,8 @@ pub struct Model {
     pub path: String,
     pub status: String,
     pub log: Json,
+    pub json_id: Option<i32>,
+    pub file_type: String,
     pub takeout_zip_id: i32,
 }
 

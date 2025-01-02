@@ -131,14 +131,17 @@ pub async fn login_google() -> anyhow::Result<Tokens> {
     }
 }
 
-async fn ensure_tokens() -> anyhow::Result<Tokens> {
+async fn ensure_tokens() -> Result<Tokens> {
     if let Ok(tokens) = load_tokens().await {
         if let Some(expires_at) = tokens.expires_at {
             if expires_at > chrono::Utc::now().timestamp() as u64 {
                 return Ok(tokens);
             }
-        }
-        refresh_access_token(&tokens.refresh_token).await
+        } 
+             match refresh_access_token(&tokens.refresh_token).await {
+                Ok(new_tokens) => Ok(new_tokens),
+                Err(_) => login_google().await,
+             }
     } else {
         login_google().await
     }
@@ -241,10 +244,18 @@ async fn refresh_access_token(refresh_token: &str) -> anyhow::Result<Tokens> {
         )?),
     );
 
+    /*
+    .add_scope(Scope::new(
+            "https://www.googleapis.com/auth/drive".to_string(),
+        ))
+     */
+    
     let token_result = client
         .exchange_refresh_token(&RefreshToken::new(refresh_token.to_string()))
         .request_async(async_http_client)
-        .await?;
+        .await;
+    
+    let token_result = token_result?;
 
     let new_tokens = Tokens {
         access_token: token_result.access_token().secret().to_string(),
