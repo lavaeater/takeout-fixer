@@ -94,7 +94,7 @@ impl FileListWidget {
         let mut entries: Vec<_> = state.progress_hash.iter().collect();
 
         // Sort by the f64 value (ascending order)
-        entries.sort_by(|a, b| a.1 .1.partial_cmp(&b.1 .1).unwrap());
+        entries.sort_by(|a, b| a.0.partial_cmp(b.0).unwrap());
         
         let info =
             entries
