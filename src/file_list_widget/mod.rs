@@ -285,7 +285,8 @@ struct PhotoMetadata {
 #[derive(Debug, Deserialize)]
 struct PhotoTakenTime {
     timestamp: String,
-    _formatted: String,
+    #[allow(dead_code)]
+    formatted: String,
 }
 
 impl From<&DriveItem> for Row<'_> {
