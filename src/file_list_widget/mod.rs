@@ -202,9 +202,6 @@ impl FileListWidget {
             state
                 .progress_hash
                 .insert(item.to_string(), (task.to_string(), progress));
-            if state.progress_hash.get(item).unwrap().1 >= 1.0 {
-                state.progress_hash.remove(item);
-            }
         }
     }
 

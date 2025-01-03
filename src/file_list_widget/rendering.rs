@@ -25,6 +25,8 @@ impl Widget for &mut FileListWidget {
                 self.render_processing_view(area, buf);
             }
         }
+        let mut state = self.get_write_state();
+        state.progress_hash.clear();
     }
 }
 
