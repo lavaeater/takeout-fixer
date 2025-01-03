@@ -1,6 +1,16 @@
-use crate::app::{App, AppResult};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use crate::widgets::UiActions;
+use crate::app::{App, AppResult};
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum UiActions {
+    StartProcessing,
+    ScrollDown,
+    ScrollUp,
+    #[default]
+    SelectItem,
+    SwitchView,
+    Quit,
+}
 
 /// Handles the key events and updates the state of [`App`].
 pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {

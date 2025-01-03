@@ -1,5 +1,5 @@
 use std::error;
-use crate::widgets::FileListWidget;
+use crate::file_list_widget::FileListWidget;
 
 /// Application result type.
 pub type AppResult<T> = std::result::Result<T, Box<dyn error::Error>>;
