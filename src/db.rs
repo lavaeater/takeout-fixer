@@ -1,6 +1,7 @@
 use crate::file_list_widget::DriveItem;
 use anyhow::Error;
 use anyhow::Result;
+use google_drive::files::Files;
 use entity::takeout_zip::{ActiveModel as TakeoutZipActiveModel, Column, Model as TakeoutZip};
 use entity::{file_in_zip, media_file, takeout_zip};
 use sea_orm::ActiveValue::Set;
@@ -132,6 +133,16 @@ pub async fn store_files(files: Vec<DriveItem>) -> anyhow::Result<()> {
     Ok(())
 }
 
+pub async fn fetch_json_if_exists(media_file: &file_in_zip::Model) -> Result<Option<file_in_zip::Model>> {
+    let conn = get_db_connection().await?;
+    let model = file_in_zip::Entity::find()
+        .filter(file_in_zip::Column::NameNoExt.eq(&media_file.name_no_ext))
+        .filter(file_in_zip::Column::FileType.eq("json"))
+        .one(&conn)
+        .await?;
+    Ok(model)
+}
+
 pub async fn fetch_related_for_file_in_zip(file_in_zip: &file_in_zip::Model) -> Result<file_in_zip::Model> {
     let conn = get_db_connection().await?;
     Ok(file_in_zip::Entity::find_by_id(file_in_zip.related_id.unwrap())
@@ -139,16 +150,22 @@ pub async fn fetch_related_for_file_in_zip(file_in_zip: &file_in_zip::Model) -> 
 }
 
 pub async fn fetch_new_media_and_set_status_to_processing() -> Result<Option<file_in_zip::Model>> {
-    fetch_media_file_to_process("new", Some("processing")).await
+    fetch_media_file_to_process("new", "media", Some("processing")).await
+}
+
+pub async fn fetch_new_json_and_set_status_to_processing() -> Result<Option<file_in_zip::Model>> {
+    fetch_media_file_to_process("new", "json", Some("processing")).await
 }
 
 pub async fn fetch_media_file_to_process(
     status: &str,
+    file_type: &str,
     new_status: Option<&str>,
 ) -> Result<Option<file_in_zip::Model>> {
     let conn = get_db_connection().await?;
     let model = file_in_zip::Entity::find()
         .filter(file_in_zip::Column::Status.eq(status))
+        .filter(file_in_zip::Column::FileType.eq(file_type))
         .one(&conn)
         .await?;
     match model {

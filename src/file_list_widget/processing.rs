@@ -1,18 +1,27 @@
-use std::time::Duration;
-use sea_orm::ActiveValue::Set;
-use chrono::{DateTime, Datelike};
-use entity::file_in_zip::Model as FileInZipModel;
-use serde_json::Value;
-use entity::takeout_zip::Model as TakeoutZipModel;
-use tokio::fs::File as TokioFile;
-use tokio::io::{AsyncWriteExt, BufReader};
-use async_compression::tokio::bufread::GzipDecoder;
-use tokio_tar::{Archive, EntryType};
-use sea_orm::{IntoActiveModel, TryIntoModel};
-use futures::StreamExt;
-use crate::db::{create_file_in_zip, create_media_file, fetch_new_media_and_set_status_to_processing, fetch_next_takeout, fetch_related_for_file_in_zip, store_file, update_file_in_zip, update_takeout_zip};
+use crate::db::{create_file_in_zip, create_media_file, fetch_json_if_exists, fetch_new_json_and_set_status_to_processing, fetch_new_media_and_set_status_to_processing, fetch_next_takeout, fetch_related_for_file_in_zip, store_file, update_file_in_zip, update_takeout_zip};
 use crate::drive::{download, get_file_path, get_target_folder};
 use crate::file_list_widget::{DriveItem, FileListWidget, LoadingState, PhotoMetadata, Task};
+use crate::media_utils::rexif_get_taken_date;
+use anyhow::Result;
+use async_compression::tokio::bufread::GzipDecoder;
+use chrono::{DateTime, Datelike, Utc};
+use entity::file_in_zip::{Model as FileInZipModel, Model};
+use entity::takeout_zip::Model as TakeoutZipModel;
+use futures::StreamExt;
+use sea_orm::ActiveValue::Set;
+use sea_orm::{IntoActiveModel, TryIntoModel};
+use serde_json::Value;
+use std::time::Duration;
+use tokio::fs;
+use tokio::fs::File as TokioFile;
+use tokio::io::{AsyncWriteExt, BufReader};
+use tokio_tar::{Archive, EntryType};
+
+enum MediaType {
+    Image,
+    Video,
+    Unknown,
+}
 
 impl FileListWidget {
     pub(crate) async fn store_files_in_db(self, files: Vec<DriveItem>) {
@@ -34,7 +43,8 @@ impl FileListWidget {
         state.processing = true;
         state.max_task_counts.insert(Task::Download, 3);
         state.max_task_counts.insert(Task::Examination, 3);
-        state.max_task_counts.insert(Task::FileProcessing, 3);
+        state.max_task_counts.insert(Task::MediaProcessing, 3);
+        state.max_task_counts.insert(Task::JsonProcessing, 3);
         let this = self.clone();
         tokio::spawn(this.start_processing_pipeline());
     }
@@ -111,17 +121,49 @@ impl FileListWidget {
                 }
             }
 
-            if self.start_task(Task::FileProcessing) {
+            if self.start_task(Task::MediaProcessing) {
                 if let Ok(Some(item)) = fetch_new_media_and_set_status_to_processing().await {
                     let this = self.clone();
 
                     tokio::spawn(async move {
-                        this.process_media_file(item.clone())
-                            .await
-                            .expect("Failed to process media file");
+                        let later = this.clone();
+                        match this.process_media_file(item.clone()).await {
+                            Ok(_) => {
+                                later.stop_task(Task::MediaProcessing);
+                            }
+                            Err(err) => {
+                                let mut item = item.into_active_model();
+                                item.status = Set(format!("processing_failed: {}", err));
+                                update_file_in_zip(item).await.unwrap();
+                                later.stop_task(Task::MediaProcessing);
+                            }
+                        }
                     });
                 } else {
-                    self.stop_task(Task::FileProcessing);
+                    self.stop_task(Task::MediaProcessing);
+                }
+            }
+
+            if self.start_task(Task::JsonProcessing) {
+                if let Ok(Some(item)) = fetch_new_json_and_set_status_to_processing().await {
+                    let this = self.clone();
+
+                    tokio::spawn(async move {
+                        let later = this.clone();
+                        match this.process_json_file(item.clone()).await {
+                            Ok(_) => {
+                                later.stop_task(Task::JsonProcessing);
+                            }
+                            Err(err) => {
+                                let mut item = item.into_active_model();
+                                item.status = Set(format!("processing_failed: {}", err));
+                                update_file_in_zip(item).await.unwrap();
+                                later.stop_task(Task::JsonProcessing);
+                            }
+                        }
+                    });
+                } else {
+                    self.stop_task(Task::JsonProcessing);
                 }
             }
         }
@@ -141,67 +183,103 @@ impl FileListWidget {
         }
     }
 
-    async fn process_media_file(self, media_file: FileInZipModel) -> anyhow::Result<()> {
-        self.update_item_progress(&media_file.name, "processing", 0.1);
-        /*
-        Above all else, the media file is an image or a video file, etc,
-        that we can apply some metadata from a json on using the exif thingie.
-        After having used that we can then move it to its proper place on
-        the hard drive...
-         */
-
-        //Remove
-        let json_data = fetch_related_for_file_in_zip(&media_file).await?;
-        /*
-        Now we have the paths... what to do next? Read that goshdarn
-        json and do stuff to it.
-         */
-        let file_content = tokio::fs::read_to_string(&json_data.path).await?;
+    async fn process_json_file(self, json_file: FileInZipModel) -> Result<()> {
+        // Is it associated already? Find the associated media file path and move this there.
+        // else, find the file to associate with. Associate with it.
+        Ok(())
+    }
+    
+    async fn get_date_taken_from_json(&self, json_file: FileInZipModel) -> Result<Option<DateTime<Utc>>> {
+        let file_content = fs::read_to_string(&json_file.path).await?;
         let metadata: PhotoMetadata = serde_json::from_str(&file_content)?;
-        self.update_item_progress(&media_file.name, "processing", 0.3);
+        let timestamp: i64 = metadata.photo_taken_time.timestamp.parse()?;
+
+        Ok(DateTime::from_timestamp(timestamp, 0))
+    }
+
+    async fn process_media_file(&self, media_file: FileInZipModel) -> Result<()> {
+        self.update_item_progress(&media_file.name, "start processing", 0.1);
+        
+        let json_file = fetch_json_if_exists(&media_file).await?;
+        
+        if let Some(json_data) = json_file.clone() {
+            self.update_item_progress(&media_file.name, "associating json", 0.2);
+
+            let mut to_save_media_file = media_file.clone().into_active_model();
+            to_save_media_file.related_id = Set(Some(json_data.id));
+            update_file_in_zip(to_save_media_file).await?;
+            let mut json_data = json_data.into_active_model();
+            json_data.related_id = Set(Some(media_file.id));
+            let json_data = update_file_in_zip(json_data).await?;
+            self.update_item_progress(&media_file.name, "done with json", 0.3);
+        }
 
         // Extract the timestamp
-        let timestamp: i64 = metadata.photo_taken_time.timestamp.parse()?; // Parse string to i64
-
-        let datetime_utc = DateTime::from_timestamp(timestamp, 0)
-            .expect("Failed to convert timestamp to datetime");
+        self.update_item_progress(&media_file.name, "read taken date", 0.35);
+        let datetime_utc = match rexif_get_taken_date(&media_file.path).await? {
+            Some(dt) => Some(dt),
+            None => {
+                match json_file.clone() {
+                    Some(json_file) => {
+                        self.update_item_progress(&media_file.name, "read date from json", 0.4);
+                        self.get_date_taken_from_json(json_file).await?
+                    }
+                    _ => {None}
+                }
+            }
+        };
+        
+        let datetime_utc = match datetime_utc {
+            Some(dt) => dt,
+            None => {
+                    let mut media_file = media_file.into_active_model();
+                    media_file.status = Set("no_date".to_string()); // This can then be handled using
+                    //the json I guess.
+                    let media_file = update_file_in_zip(media_file).await?;
+                    self.update_item_progress(&media_file.name, "err", 1.0);
+                    return Ok(());
+                }
+            };
+        
+        
         let year = datetime_utc.year();
         let month_name = datetime_utc.format("%B").to_string();
         let day = datetime_utc.day();
 
         let target_folder = get_target_folder().join(format!("{}/{}/{}/", year, month_name, day));
-        tokio::fs::create_dir_all(&target_folder).await?;
-        let json_path = target_folder.clone().join(&json_data.name);
+        fs::create_dir_all(&target_folder).await?;
+        
         let media_path = target_folder.join(&media_file.name);
-        self.update_item_progress(&media_file.name, "processing", 0.4);
-
-        tokio::fs::rename(&json_data.path, &json_path).await?;
-        self.update_item_progress(&media_file.name, "processing", 0.5);
-
-        tokio::fs::rename(&media_file.path, &media_path).await?;
-        self.update_item_progress(&media_file.name, "processing", 0.6);
-
-        let mut json_file = json_data.into_active_model();
+        self.update_item_progress(&media_file.name, "move media file", 0.4);
+        fs::rename(&media_file.path, &media_path).await?;
+        self.update_item_progress(&media_file.name, "update path in db", 0.5);
         let mut media_file = media_file.into_active_model();
-        json_file.status = Set("processed".to_string());
         media_file.status = Set("processed".to_string());
-        json_file.path = Set(json_path.to_str().unwrap().to_owned());
         media_file.path = Set(media_path.to_str().unwrap().to_owned());
-
-        let json_file = update_file_in_zip(json_file).await?;
         let media_file = update_file_in_zip(media_file).await?;
-        self.update_item_progress(&media_file.name, "processing", 0.7);
+        self.update_item_progress(&media_file.name, "done with media file", 0.6);
 
-        let file_content = tokio::fs::read_to_string(json_file.path).await?;
-        self.update_item_progress(&media_file.name, "processing", 0.8);
 
-        let raw_json: Value = serde_json::from_str(&file_content)?;
-        self.update_item_progress(&media_file.name, "processing", 0.9);
+        if let Some(json_file) = json_file {
+            self.update_item_progress(&media_file.name, "move json file if exists", 0.65);
+            let json_path = target_folder.clone().join(&json_file.name);
+            fs::rename(&json_file.path, &json_path).await?;
+            self.update_item_progress(&media_file.name, "json moved", 0.7);
+            let mut json_file = json_file.into_active_model();
+            json_file.status = Set("processed".to_string());
+            json_file.path = Set(json_path.to_str().unwrap().to_owned());
+            let json_file = update_file_in_zip(json_file).await?;
+            self.update_item_progress(&media_file.name, "read json contents", 0.75);
+            let file_content = fs::read_to_string(json_file.path).await?;
+            self.update_item_progress(&media_file.name, "convert to raw json", 0.8);
+            let raw_json: Value = serde_json::from_str(&file_content)?;
+            self.update_item_progress(&media_file.name, "create media file in db", 0.85);
 
-        let _ = create_media_file(&media_file.name, &media_file.path, &raw_json).await?;
-        self.update_item_progress(&media_file.name, "processing", 1.0);
+            let _ = create_media_file(&media_file.name, &media_file.path, &raw_json).await?;
+            self.update_item_progress(&media_file.name, "create media file in db", 0.9);
+        }
 
-        self.stop_task(Task::FileProcessing);
+        self.update_item_progress(&media_file.name, "done", 1.0);
 
         Ok(())
     }
@@ -239,13 +317,13 @@ impl FileListWidget {
                 count += 1;
                 // Ensure parent directories exist
                 if let Some(parent) = full_path.parent() {
-                    tokio::fs::create_dir_all(parent).await?;
+                    fs::create_dir_all(parent).await?;
                 }
                 /*
                 Modify so we first extract this file to where it is supposed to be,
                 then we add the data for the file to the database
                 */
-                let mut output_file = tokio::fs::File::create(&full_path).await?;
+                let mut output_file = fs::File::create(&full_path).await?;
                 tokio::io::copy(&mut entry, &mut output_file).await?;
 
                 let _file_in_zip = create_file_in_zip(
@@ -268,7 +346,7 @@ impl FileListWidget {
                 self.update_item_progress(&takeout_zip.name, "unzipping", progress);
             }
         }
-        tokio::fs::remove_file(&takeout_zip.local_path).await?;
+        fs::remove_file(&takeout_zip.local_path).await?;
         let mut takeout_zip = takeout_zip.into_active_model();
         takeout_zip.local_path = Set("".to_string());
         update_takeout_zip(takeout_zip).await?;
@@ -281,7 +359,7 @@ impl FileListWidget {
             let mut response = download(id).await?;
             let size = response.content_length().unwrap_or_default();
             let mut written = usize::default();
-            let mut async_file = tokio::fs::OpenOptions::new()
+            let mut async_file = fs::OpenOptions::new()
                 .write(true)
                 .create(true)
                 .truncate(true)
@@ -296,5 +374,4 @@ impl FileListWidget {
             Err(anyhow::Error::msg("Not a file"))
         }
     }
-
 }

@@ -31,7 +31,8 @@ impl Default for FileListWidget {
 pub enum Task {
     Download,
     Examination,
-    FileProcessing,
+    MediaProcessing,
+    JsonProcessing,
 }
 
 #[derive(Debug)]
