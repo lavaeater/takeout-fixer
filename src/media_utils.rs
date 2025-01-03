@@ -5,6 +5,9 @@ use std::path::Path;
 
 pub async fn rexif_get_taken_date<P: AsRef<Path>>(path: P) -> Result<Option<DateTime<Utc>>> {
     if path.as_ref().is_file() {
+        if path.as_ref().extension().unwrap() == "png" {
+            return Ok(None);
+        }
         let mut parser = MediaParser::new();
         let ms = MediaSource::file_path(path)?;
         let r = if ms.has_exif() {
@@ -12,11 +15,11 @@ pub async fn rexif_get_taken_date<P: AsRef<Path>>(path: P) -> Result<Option<Date
             iter.into_iter()
             .find(|x| x.tag_code() == ExifTag::CreateDate.code())
                 .and_then(|mut x| x.take_value()
-                    .and_then(|v| v.as_time().and_then(|t| Some(t.to_utc()))))
+                    .and_then(|v| v.as_time().map(|t| t.to_utc())))
         } else {
             let info: TrackInfo = parser.parse(ms)?;
             info.get(TrackInfoTag::CreateDate)
-                .and_then(|v| v.as_time().and_then(|t| Some(t.to_utc())))
+                .and_then(|v| v.as_time().map(|t| t.to_utc()))
         };
         Ok(r)
     } else {

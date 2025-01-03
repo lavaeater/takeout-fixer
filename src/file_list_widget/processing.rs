@@ -238,7 +238,8 @@ impl FileListWidget {
             let mut json_file = json_file.into_active_model();
             json_file.status = Set(MEDIA_STATUS_NO_MEDIA.to_owned());
             //This one will simply wait for its turn.
-            update_file_in_zip(json_file).await?;
+            let json_file = update_file_in_zip(json_file).await?;
+            self.update_item_progress(&json_file.name, "no media file", 1.0);
         }
         Ok(())
     }

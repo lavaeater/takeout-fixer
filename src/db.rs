@@ -1,3 +1,4 @@
+use std::path::Path;
 use crate::file_list_widget::DriveItem;
 use anyhow::Error;
 use anyhow::Result;
@@ -79,11 +80,11 @@ pub async fn create_file_in_zip(
     
     let extension = path.clone();
     let extension = extension.split('.').last().unwrap();
-    let name_no_ext = name.clone().replace(&format!(".{}", extension), "");
+    let name_no_ext = Path::new(&name).file_stem().unwrap().to_str().unwrap();
     let am = file_in_zip::ActiveModel {
         takeout_zip_id: Set(takeout_zip_id),
-        name: Set(name),
-        name_no_ext: Set(name_no_ext),
+        name: Set(name.clone()),
+        name_no_ext: Set(name_no_ext.to_owned()),
         path: Set(path),
         status: Set(MEDIA_STATUS_NEW.to_owned()),
         log: Set(serde_json::Value::String("".to_owned())),
