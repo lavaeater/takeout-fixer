@@ -30,7 +30,7 @@ impl MigrationTrait for Migration {
                     .if_not_exists()
                     .col(pk_auto(FileInZip::Id))
                     .col(string(FileInZip::Name))
-                    .col(string(FileInZip::NameNoExt))
+                    .col(string(FileInZip::PathNoExt))
                     .col(string(FileInZip::Path))
                     .col(string(FileInZip::Status))
                     .col(json(FileInZip::Log))
@@ -123,7 +123,7 @@ enum FileInZip {
     Id,
     TakeoutZipId,
     Name,
-    NameNoExt,
+    PathNoExt,
     Path,
     Status,
     Log,
@@ -138,7 +138,7 @@ impl Display for FileInZip {
             FileInZip::Id => write!(f, "id"),
             FileInZip::TakeoutZipId => write!(f, "takeout_zip_id"),
             FileInZip::Name => write!(f, "name"),
-            FileInZip::NameNoExt => write!(f, "name_no_ext"),
+            FileInZip::PathNoExt => write!(f, "path_no_ext"),
             FileInZip::Path => write!(f, "path"),
             FileInZip::Status => write!(f, "status"),
             FileInZip::Log => write!(f, "log"),

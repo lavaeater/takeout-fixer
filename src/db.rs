@@ -77,15 +77,16 @@ pub async fn create_file_in_zip(
     } else {
         "media"
     };
-    
+
+    let path_no_ext = path.split('.').next().unwrap_or("");
     let path = Path::new(&path);
     
     let extension = path.extension().unwrap().to_str().unwrap();
-    let name_no_ext = name.split('.').next().unwrap_or("");
+    
     let am = file_in_zip::ActiveModel {
         takeout_zip_id: Set(takeout_zip_id),
         name: Set(name.clone()),
-        name_no_ext: Set(name_no_ext.to_owned()),
+        path_no_ext: Set(path_no_ext.to_owned()),
         path: Set(path.to_str().unwrap().to_owned()),
         status: Set(MEDIA_STATUS_NEW.to_owned()),
         log: Set(serde_json::Value::String("".to_owned())),
@@ -145,7 +146,7 @@ pub async fn fetch_media_file_if_exists(json_file: &file_in_zip::Model) -> Resul
     let conn = get_db_connection().await?;
     let model= if json_file.related_id.is_none() {
         file_in_zip::Entity::find()
-            .filter(file_in_zip::Column::NameNoExt.eq(&json_file.name_no_ext))
+            .filter(file_in_zip::Column::PathNoExt.eq(&json_file.path_no_ext))
             .filter(file_in_zip::Column::FileType.eq("media"))
             .one(&conn)
             .await?
@@ -161,7 +162,7 @@ pub async fn fetch_json_if_exists(media_file: &file_in_zip::Model) -> Result<Opt
     let conn = get_db_connection().await?;
     let model= if media_file.related_id.is_none() {
         file_in_zip::Entity::find()
-            .filter(file_in_zip::Column::NameNoExt.eq(&media_file.name_no_ext))
+            .filter(file_in_zip::Column::PathNoExt.eq(&media_file.path_no_ext))
             .filter(file_in_zip::Column::FileType.eq("json"))
             .one(&conn)
             .await?
