@@ -1,4 +1,4 @@
-use crate::db::{create_file_in_zip, create_media_file, fetch_json_if_exists, fetch_new_json_and_set_status_to_processing, fetch_new_media_and_set_status_to_processing, fetch_next_takeout, fetch_related_for_file_in_zip, store_file, update_file_in_zip, update_takeout_zip};
+use crate::db::{create_file_in_zip, create_media_file, fetch_json_if_exists, fetch_media_file_if_exists, fetch_new_json_and_set_status_to_processing, fetch_new_media_and_set_status_to_processing, fetch_next_takeout, store_file, update_file_in_zip, update_takeout_zip, MEDIA_STATUS_FAILED, MEDIA_STATUS_NEW, MEDIA_STATUS_NO_DATE, MEDIA_STATUS_NO_MEDIA, MEDIA_STATUS_PROCESSED};
 use crate::drive::{download, get_file_path, get_target_folder};
 use crate::file_list_widget::{DriveItem, FileListWidget, LoadingState, PhotoMetadata, Task};
 use crate::media_utils::rexif_get_taken_date;
@@ -11,17 +11,12 @@ use futures::StreamExt;
 use sea_orm::ActiveValue::Set;
 use sea_orm::{IntoActiveModel, TryIntoModel};
 use serde_json::Value;
+use std::path::Path;
 use std::time::Duration;
 use tokio::fs;
 use tokio::fs::File as TokioFile;
 use tokio::io::{AsyncWriteExt, BufReader};
 use tokio_tar::{Archive, EntryType};
-
-enum MediaType {
-    Image,
-    Video,
-    Unknown,
-}
 
 impl FileListWidget {
     pub(crate) async fn store_files_in_db(self, files: Vec<DriveItem>) {
@@ -133,7 +128,7 @@ impl FileListWidget {
                             }
                             Err(err) => {
                                 let mut item = item.into_active_model();
-                                item.status = Set(format!("processing_failed: {}", err));
+                                item.status = Set(format!("{}: {}", MEDIA_STATUS_FAILED, err));
                                 update_file_in_zip(item).await.unwrap();
                                 later.stop_task(Task::MediaProcessing);
                             }
@@ -156,7 +151,7 @@ impl FileListWidget {
                             }
                             Err(err) => {
                                 let mut item = item.into_active_model();
-                                item.status = Set(format!("processing_failed: {}", err));
+                                item.status = Set(format!("{}: {}", MEDIA_STATUS_FAILED, err));
                                 update_file_in_zip(item).await.unwrap();
                                 later.stop_task(Task::JsonProcessing);
                             }
@@ -184,12 +179,67 @@ impl FileListWidget {
     }
 
     async fn process_json_file(self, json_file: FileInZipModel) -> Result<()> {
-        // Is it associated already? Find the associated media file path and move this there.
-        // else, find the file to associate with. Associate with it.
+        self.update_item_progress(&json_file.name, "start processing", 0.1);
+        let media_file = fetch_media_file_if_exists(&json_file).await?;
+        self.update_item_progress(&json_file.name, "check for media file", 0.2);
+        if let Some(media_file) = media_file {
+            //there is a media file. It might or might not be processed...
+            match media_file.status.as_str() {
+                MEDIA_STATUS_NO_DATE | MEDIA_STATUS_NEW => {
+                    self.update_item_progress(&json_file.name, "associate media with json", 0.3);
+                    if media_file.related_id.is_none() {
+                        let (_media_file, _json_file) = self.associate_media_with_json(&media_file, &json_file).await?;
+                    }
+                    let mut media_file = media_file.clone().into_active_model();
+                    media_file.status = Set(MEDIA_STATUS_NEW.to_owned());
+                    self.update_item_progress(&json_file.name, "set media to new", 0.35);
+                    update_file_in_zip(media_file).await?;
+                }
+                MEDIA_STATUS_PROCESSED => {
+                    self.update_item_progress(&json_file.name, "media processed", 0.4);
+                    self.update_item_progress(&json_file.name, "associte with json", 0.5);
+                    let media_file = match media_file.related_id {
+                        None => { self.associate_media_with_json(&media_file, &json_file).await?.0 }
+                        Some(_) => { media_file }
+                    };
+                    let path = Path::new(&media_file.path);
+                    let target_folder = path.parent().unwrap();
+                    let json_path = target_folder.join(&json_file.name);
+                    fs::rename(&json_file.path, &json_path).await?;
+                    self.update_item_progress(&media_file.name, "json moved", 0.6);
+                    let mut json_file = json_file.into_active_model();
+                    json_file.status = Set(MEDIA_STATUS_PROCESSED.to_string());
+                    json_file.path = Set(json_path.to_str().unwrap().to_owned());
+                    let json_file = update_file_in_zip(json_file).await?;
+                    self.update_item_progress(&media_file.name, "read json contents", 0.7);
+                    let file_content = fs::read_to_string(&json_file.path).await?;
+                    self.update_item_progress(&media_file.name, "convert to raw json", 0.8);
+                    let raw_json: Value = serde_json::from_str(&file_content)?;
+                    self.update_item_progress(&media_file.name, "create media file in db", 0.9);
+                    let _ = create_media_file(&media_file.name, &media_file.path, &raw_json).await?;
+                    self.update_item_progress(&media_file.name, "created media file in db", 1.0);
+                }
+                MEDIA_STATUS_FAILED => {
+                    let mut json_file = json_file.into_active_model();
+                    json_file.status = Set(format!("{}: media file already failed", MEDIA_STATUS_FAILED));
+                    update_file_in_zip(json_file).await?;
+                }
+                _ => {}
+            }
+        } else {
+            self.update_item_progress(&json_file.name, "no media file", 0.5);
+            let mut json_file = json_file.into_active_model();
+            json_file.status = Set(MEDIA_STATUS_NO_MEDIA.to_owned());
+            //This one will simply wait for its turn.
+            update_file_in_zip(json_file).await?;
+        }
         Ok(())
     }
-    
-    async fn get_date_taken_from_json(&self, json_file: FileInZipModel) -> Result<Option<DateTime<Utc>>> {
+
+    async fn get_date_taken_from_json(
+        &self,
+        json_file: FileInZipModel,
+    ) -> Result<Option<DateTime<Utc>>> {
         let file_content = fs::read_to_string(&json_file.path).await?;
         let metadata: PhotoMetadata = serde_json::from_str(&file_content)?;
         let timestamp: i64 = metadata.photo_taken_time.timestamp.parse()?;
@@ -199,18 +249,13 @@ impl FileListWidget {
 
     async fn process_media_file(&self, media_file: FileInZipModel) -> Result<()> {
         self.update_item_progress(&media_file.name, "start processing", 0.1);
-        
+
         let json_file = fetch_json_if_exists(&media_file).await?;
-        
+
         if let Some(json_data) = json_file.clone() {
             self.update_item_progress(&media_file.name, "associating json", 0.2);
 
-            let mut to_save_media_file = media_file.clone().into_active_model();
-            to_save_media_file.related_id = Set(Some(json_data.id));
-            update_file_in_zip(to_save_media_file).await?;
-            let mut json_data = json_data.into_active_model();
-            json_data.related_id = Set(Some(media_file.id));
-            let json_data = update_file_in_zip(json_data).await?;
+            self.associate_media_with_json(&media_file, &json_data).await?;
             self.update_item_progress(&media_file.name, "done with json", 0.3);
         }
 
@@ -218,47 +263,43 @@ impl FileListWidget {
         self.update_item_progress(&media_file.name, "read taken date", 0.35);
         let datetime_utc = match rexif_get_taken_date(&media_file.path).await? {
             Some(dt) => Some(dt),
-            None => {
-                match json_file.clone() {
-                    Some(json_file) => {
-                        self.update_item_progress(&media_file.name, "read date from json", 0.4);
-                        self.get_date_taken_from_json(json_file).await?
-                    }
-                    _ => {None}
+            None => match json_file.clone() {
+                Some(json_file) => {
+                    self.update_item_progress(&media_file.name, "read date from json", 0.4);
+                    self.get_date_taken_from_json(json_file).await?
                 }
-            }
+                _ => None,
+            },
         };
-        
+
         let datetime_utc = match datetime_utc {
             Some(dt) => dt,
             None => {
-                    let mut media_file = media_file.into_active_model();
-                    media_file.status = Set("no_date".to_string()); // This can then be handled using
-                    //the json I guess.
-                    let media_file = update_file_in_zip(media_file).await?;
-                    self.update_item_progress(&media_file.name, "err", 1.0);
-                    return Ok(());
-                }
-            };
-        
-        
+                let mut media_file = media_file.into_active_model();
+                media_file.status = Set(MEDIA_STATUS_NO_DATE.to_owned()); // This can then be handled using
+                                                                //the json I guess.
+                let media_file = update_file_in_zip(media_file).await?;
+                self.update_item_progress(&media_file.name, "err", 1.0);
+                return Ok(());
+            }
+        };
+
         let year = datetime_utc.year();
         let month_name = datetime_utc.format("%B").to_string();
         let day = datetime_utc.day();
 
         let target_folder = get_target_folder().join(format!("{}/{}/{}/", year, month_name, day));
         fs::create_dir_all(&target_folder).await?;
-        
+
         let media_path = target_folder.join(&media_file.name);
         self.update_item_progress(&media_file.name, "move media file", 0.4);
         fs::rename(&media_file.path, &media_path).await?;
         self.update_item_progress(&media_file.name, "update path in db", 0.5);
         let mut media_file = media_file.into_active_model();
-        media_file.status = Set("processed".to_string());
+        media_file.status = Set(MEDIA_STATUS_PROCESSED.to_string());
         media_file.path = Set(media_path.to_str().unwrap().to_owned());
         let media_file = update_file_in_zip(media_file).await?;
         self.update_item_progress(&media_file.name, "done with media file", 0.6);
-
 
         if let Some(json_file) = json_file {
             self.update_item_progress(&media_file.name, "move json file if exists", 0.65);
@@ -266,7 +307,7 @@ impl FileListWidget {
             fs::rename(&json_file.path, &json_path).await?;
             self.update_item_progress(&media_file.name, "json moved", 0.7);
             let mut json_file = json_file.into_active_model();
-            json_file.status = Set("processed".to_string());
+            json_file.status = Set(MEDIA_STATUS_PROCESSED.to_string());
             json_file.path = Set(json_path.to_str().unwrap().to_owned());
             let json_file = update_file_in_zip(json_file).await?;
             self.update_item_progress(&media_file.name, "read json contents", 0.75);
@@ -282,6 +323,16 @@ impl FileListWidget {
         self.update_item_progress(&media_file.name, "done", 1.0);
 
         Ok(())
+    }
+
+    async fn associate_media_with_json(&self, media_file: &Model, json_data: &Model) -> Result<(Model, Model)> {
+        let mut to_save_media_file = media_file.clone().into_active_model();
+        to_save_media_file.related_id = Set(Some(json_data.id));
+        let to_save_media_file = update_file_in_zip(to_save_media_file).await?;
+        let mut json_data = json_data.clone().into_active_model();
+        json_data.related_id = Set(Some(to_save_media_file.id));
+        let json_data = update_file_in_zip(json_data).await?;
+        Ok((to_save_media_file, json_data))
     }
 
     async fn examine_zip_with_progress(self, takeout_zip: TakeoutZipModel) -> anyhow::Result<()> {

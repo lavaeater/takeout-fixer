@@ -3,7 +3,7 @@ mod event;
 mod tui;
 pub(crate) mod drive;
 mod ui;
-mod db;
+pub(crate) mod db;
 mod media_utils;
 mod file_list_widget;
 

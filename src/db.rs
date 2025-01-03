@@ -1,11 +1,17 @@
 use crate::file_list_widget::DriveItem;
 use anyhow::Error;
 use anyhow::Result;
-use google_drive::files::Files;
 use entity::takeout_zip::{ActiveModel as TakeoutZipActiveModel, Column, Model as TakeoutZip};
 use entity::{file_in_zip, media_file, takeout_zip};
 use sea_orm::ActiveValue::Set;
 use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, IntoActiveModel, NotSet, PaginatorTrait, QueryFilter};
+
+pub const MEDIA_STATUS_NEW: &str = "new";
+pub const MEDIA_STATUS_PROCESSING: &str = "processing";
+pub const MEDIA_STATUS_PROCESSED: &str = "processed";
+pub const MEDIA_STATUS_FAILED: &str = "failed";
+pub const MEDIA_STATUS_NO_MEDIA: &str = "failed";
+pub const MEDIA_STATUS_NO_DATE: &str = "no_date";
 
 pub fn get_db_url() -> String {
     dotenv::var("DATABASE_URL").unwrap_or("sqlite::memory:".to_string())
@@ -79,7 +85,7 @@ pub async fn create_file_in_zip(
         name: Set(name),
         name_no_ext: Set(name_no_ext),
         path: Set(path),
-        status: Set("new".to_owned()),
+        status: Set(MEDIA_STATUS_NEW.to_owned()),
         log: Set(serde_json::Value::String("".to_owned())),
         file_type: Set(file_type.to_owned()),
         related_id: NotSet,
@@ -98,7 +104,7 @@ pub fn get_model(file: DriveItem) -> Result<takeout_zip::ActiveModel> {
             id: Default::default(),
             drive_id: Set(id),
             name: Set(name),
-            status: Set("new".to_string()),
+            status: Set(MEDIA_STATUS_NEW.to_string()),
             local_path: Set("".to_string()),
         })
     } else {
@@ -133,28 +139,44 @@ pub async fn store_files(files: Vec<DriveItem>) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub async fn fetch_json_if_exists(media_file: &file_in_zip::Model) -> Result<Option<file_in_zip::Model>> {
+pub async fn fetch_media_file_if_exists(json_file: &file_in_zip::Model) -> Result<Option<file_in_zip::Model>> {
     let conn = get_db_connection().await?;
-    let model = file_in_zip::Entity::find()
-        .filter(file_in_zip::Column::NameNoExt.eq(&media_file.name_no_ext))
-        .filter(file_in_zip::Column::FileType.eq("json"))
-        .one(&conn)
-        .await?;
+    let model= if json_file.related_id.is_none() {
+        file_in_zip::Entity::find()
+            .filter(file_in_zip::Column::NameNoExt.eq(&json_file.name_no_ext))
+            .filter(file_in_zip::Column::FileType.eq("media"))
+            .one(&conn)
+            .await?
+    } else {
+        file_in_zip::Entity::find_by_id(json_file.related_id.unwrap())
+            .one(&conn)
+            .await?
+    };
     Ok(model)
 }
 
-pub async fn fetch_related_for_file_in_zip(file_in_zip: &file_in_zip::Model) -> Result<file_in_zip::Model> {
+pub async fn fetch_json_if_exists(media_file: &file_in_zip::Model) -> Result<Option<file_in_zip::Model>> {
     let conn = get_db_connection().await?;
-    Ok(file_in_zip::Entity::find_by_id(file_in_zip.related_id.unwrap())
-        .one(&conn).await?.unwrap())
+    let model= if media_file.related_id.is_none() {
+        file_in_zip::Entity::find()
+            .filter(file_in_zip::Column::NameNoExt.eq(&media_file.name_no_ext))
+            .filter(file_in_zip::Column::FileType.eq("json"))
+            .one(&conn)
+            .await?
+    } else {
+        file_in_zip::Entity::find_by_id(media_file.related_id.unwrap())
+            .one(&conn)
+            .await?
+    };
+    Ok(model)
 }
 
 pub async fn fetch_new_media_and_set_status_to_processing() -> Result<Option<file_in_zip::Model>> {
-    fetch_media_file_to_process("new", "media", Some("processing")).await
+    fetch_media_file_to_process(MEDIA_STATUS_NEW, "media", Some(MEDIA_STATUS_PROCESSING)).await
 }
 
 pub async fn fetch_new_json_and_set_status_to_processing() -> Result<Option<file_in_zip::Model>> {
-    fetch_media_file_to_process("new", "json", Some("processing")).await
+    fetch_media_file_to_process(MEDIA_STATUS_NEW, "json", Some(MEDIA_STATUS_PROCESSING)).await
 }
 
 pub async fn fetch_media_file_to_process(
