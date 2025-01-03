@@ -18,7 +18,7 @@ use tokio::fs::File as TokioFile;
 use tokio::io::{AsyncWriteExt, BufReader};
 use tokio_tar::{Archive, EntryType};
 
-pub const REMOVE_ZIPS_AFTER_PROCESSING: bool = false;
+pub const REMOVE_ZIPS_AFTER_PROCESSING: bool = true;
 
 impl FileListWidget {
     pub(crate) async fn store_files_in_db(self, files: Vec<DriveItem>) {

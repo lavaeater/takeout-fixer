@@ -11,7 +11,7 @@ pub const MEDIA_STATUS_NEW: &str = "new";
 pub const MEDIA_STATUS_PROCESSING: &str = "processing";
 pub const MEDIA_STATUS_PROCESSED: &str = "processed";
 pub const MEDIA_STATUS_FAILED: &str = "failed";
-pub const MEDIA_STATUS_NO_MEDIA: &str = "failed";
+pub const MEDIA_STATUS_NO_MEDIA: &str = "no_media";
 pub const MEDIA_STATUS_NO_DATE: &str = "no_date";
 
 pub fn get_db_url() -> String {
