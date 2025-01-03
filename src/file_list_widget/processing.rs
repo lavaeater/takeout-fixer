@@ -40,6 +40,11 @@ impl FileListWidget {
         state.max_task_counts.insert(Task::Examination, 3);
         state.max_task_counts.insert(Task::MediaProcessing, 3);
         state.max_task_counts.insert(Task::JsonProcessing, 3);
+
+        state.task_counts.insert(Task::Download, 0);
+        state.task_counts.insert(Task::Examination, 0);
+        state.task_counts.insert(Task::MediaProcessing, 0);
+        state.task_counts.insert(Task::JsonProcessing, 0);
         let this = self.clone();
         tokio::spawn(this.start_processing_pipeline());
     }
