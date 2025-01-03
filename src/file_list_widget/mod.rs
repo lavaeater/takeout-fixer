@@ -234,22 +234,17 @@ impl FileListWidget {
 
     pub fn start_task(&self, task: Task) -> bool {
         let mut state = self.get_write_state();
+        let mut did_start = false;
 
-        let mut max = *state.max_task_counts.get(&task).unwrap_or(&1);
+        let max = *state.max_task_counts.get(&task).unwrap_or(&1);
 
-        let was_updated = state
-            .task_counts
-            .entry(task)
-            .and_modify(|current| {
-                if *current < max {
-                    *current += 1;
-                }
-            })
-            .or_insert_with(|| {
-                1 // Insert the initial value if key doesn't exist
-            })
-            < &mut max;
-        was_updated
+        state.task_counts.entry(task).and_modify(|current| {
+            if *current < max {
+                did_start = true;
+                *current += 1;
+            }
+        });
+        did_start
     }
 
     pub fn stop_task(&self, task: Task) -> bool {

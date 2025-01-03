@@ -24,7 +24,7 @@ impl FileListWidget {
         let len = files.len();
         for (i, file) in files.iter().enumerate() {
             if let DriveItem::File(_, name) = file {
-                self.update_item_progress(name, "Storing", i as f64 / len as f64);
+                self.update_item_progress("Storing", name, i as f64 / len as f64);
                 store_file(file.clone())
                     .await
                     .expect("Failed to store file");
@@ -113,6 +113,8 @@ impl FileListWidget {
                         }
                         update_takeout_zip(item).await.unwrap();
                     });
+                } else {
+                    self.stop_task(Task::Examination);
                 }
             }
 
