@@ -18,6 +18,8 @@ use tokio::fs::File as TokioFile;
 use tokio::io::{AsyncWriteExt, BufReader};
 use tokio_tar::{Archive, EntryType};
 
+pub const REMOVE_ZIPS_AFTER_PROCESSING: bool = false;
+
 impl FileListWidget {
     pub(crate) async fn store_files_in_db(self, files: Vec<DriveItem>) {
         self.set_loading_state(LoadingState::Processing);
@@ -36,10 +38,10 @@ impl FileListWidget {
     pub fn start_processing(&self) {
         let mut state = self.get_write_state();
         state.processing = true;
-        state.max_task_counts.insert(Task::Download, 3);
-        state.max_task_counts.insert(Task::Examination, 3);
-        state.max_task_counts.insert(Task::MediaProcessing, 3);
-        state.max_task_counts.insert(Task::JsonProcessing, 3);
+        state.max_task_counts.insert(Task::Download, 1);
+        state.max_task_counts.insert(Task::Examination, 5);
+        state.max_task_counts.insert(Task::MediaProcessing, 6);
+        state.max_task_counts.insert(Task::JsonProcessing, 6);
 
         state.task_counts.insert(Task::Download, 0);
         state.task_counts.insert(Task::Examination, 0);
@@ -269,9 +271,9 @@ impl FileListWidget {
 
         // Extract the timestamp
         self.update_item_progress(&media_file.name, "read taken date", 0.35);
-        let datetime_utc = match rexif_get_taken_date(&media_file.path).await? {
-            Some(dt) => Some(dt),
-            None => match json_file.clone() {
+        let datetime_utc = match rexif_get_taken_date(&media_file.path).await {
+            Ok(Some(dt)) => Some(dt),
+            _ => match json_file.clone() {
                 Some(json_file) => {
                     self.update_item_progress(&media_file.name, "read date from json", 0.4);
                     self.get_date_taken_from_json(json_file).await?
@@ -287,7 +289,7 @@ impl FileListWidget {
                 media_file.status = Set(MEDIA_STATUS_NO_DATE.to_owned()); // This can then be handled using
                                                                 //the json I guess.
                 let media_file = update_file_in_zip(media_file).await?;
-                self.update_item_progress(&media_file.name, "err", 1.0);
+                self.update_item_progress(&media_file.name, "no date", 1.0);
                 return Ok(());
             }
         };
@@ -405,10 +407,12 @@ impl FileListWidget {
                 self.update_item_progress(&takeout_zip.name, "unzipping", progress);
             }
         }
-        fs::remove_file(&takeout_zip.local_path).await?;
-        let mut takeout_zip = takeout_zip.into_active_model();
-        takeout_zip.local_path = Set("".to_string());
-        update_takeout_zip(takeout_zip).await?;
+        if REMOVE_ZIPS_AFTER_PROCESSING {
+            fs::remove_file(&takeout_zip.local_path).await?;
+            let mut takeout_zip = takeout_zip.into_active_model();
+            takeout_zip.local_path = Set("".to_string());
+            update_takeout_zip(takeout_zip).await?;
+        }
         Ok(())
     }
 

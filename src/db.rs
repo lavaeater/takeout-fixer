@@ -78,14 +78,15 @@ pub async fn create_file_in_zip(
         "media"
     };
     
-    let extension = path.clone();
-    let extension = extension.split('.').last().unwrap();
-    let name_no_ext = Path::new(&name).file_stem().unwrap().to_str().unwrap();
+    let path = Path::new(&path);
+    
+    let extension = path.extension().unwrap().to_str().unwrap();
+    let name_no_ext = name.split('.').next().unwrap_or("");
     let am = file_in_zip::ActiveModel {
         takeout_zip_id: Set(takeout_zip_id),
         name: Set(name.clone()),
         name_no_ext: Set(name_no_ext.to_owned()),
-        path: Set(path),
+        path: Set(path.to_str().unwrap().to_owned()),
         status: Set(MEDIA_STATUS_NEW.to_owned()),
         log: Set(serde_json::Value::String("".to_owned())),
         file_type: Set(file_type.to_owned()),
