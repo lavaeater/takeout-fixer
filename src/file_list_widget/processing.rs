@@ -38,10 +38,10 @@ impl FileListWidget {
     pub fn start_processing(&self) {
         let mut state = self.get_write_state();
         state.processing = true;
-        state.max_task_counts.insert(Task::Download, 3);
+        state.max_task_counts.insert(Task::Download, 5);
         state.max_task_counts.insert(Task::Examination, 5);
-        state.max_task_counts.insert(Task::MediaProcessing, 6);
-        state.max_task_counts.insert(Task::JsonProcessing, 6);
+        state.max_task_counts.insert(Task::MediaProcessing, 10);
+        state.max_task_counts.insert(Task::JsonProcessing, 10);
 
         state.task_counts.insert(Task::Download, 0);
         state.task_counts.insert(Task::Examination, 0);
