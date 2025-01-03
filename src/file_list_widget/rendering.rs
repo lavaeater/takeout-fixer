@@ -90,9 +90,14 @@ impl FileListWidget {
     
     fn render_status(&mut self, area: Rect, buf: &mut Buffer) {
         let state = self.state.read().unwrap();
+
+        let mut entries: Vec<_> = state.progress_hash.iter().collect();
+
+        // Sort by the f64 value (ascending order)
+        entries.sort_by(|a, b| a.1 .1.partial_cmp(&b.1 .1).unwrap());
+        
         let info =
-            state
-                .progress_hash
+            entries
                 .iter()
                 .fold(String::new(), |mut acc, (key, (task, progress))| {
                     acc = format!("{}\n{}: {}, {:.2}%", acc, task, key, progress * 100.0);
