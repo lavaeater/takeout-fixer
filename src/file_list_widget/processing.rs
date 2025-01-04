@@ -210,7 +210,7 @@ impl FileListWidget {
                     }
                     let mut media_file = media_file.clone().into_active_model();
                     media_file.status = Set(MEDIA_STATUS_NEW.to_owned());
-                    self.update_item_progress(&json_file.name, "set media to new", 0.35);
+                    self.update_item_progress(&json_file.name, "set media to new", 1.0);
                     update_file_in_zip(media_file).await?;
                 }
                 MEDIA_STATUS_PROCESSING => {
@@ -220,7 +220,8 @@ impl FileListWidget {
                     }
                     let mut json_file = json_file.into_active_model();
                     json_file.status = Set(MEDIA_STATUS_NEW.to_owned());
-                    let _json_file = update_file_in_zip(json_file).await?;
+                    let json_file = update_file_in_zip(json_file).await?;
+                    self.update_item_progress(&json_file.name, "set media to new", 1.0);
                 }
                 MEDIA_STATUS_PROCESSED => {
                     self.update_item_progress(&json_file.name, "media processed", 0.4);
@@ -233,23 +234,24 @@ impl FileListWidget {
                     let target_folder = path.parent().unwrap();
                     let json_path = target_folder.join(&json_file.name);
                     fs::rename(&json_file.path, &json_path).await?;
-                    self.update_item_progress(&media_file.name, "json moved", 0.6);
+                    self.update_item_progress(&json_file.name, "json moved", 0.6);
                     let mut json_file = json_file.into_active_model();
                     json_file.status = Set(MEDIA_STATUS_PROCESSED.to_string());
                     json_file.path = Set(json_path.to_str().unwrap().to_owned());
                     let json_file = update_file_in_zip(json_file).await?;
-                    self.update_item_progress(&media_file.name, "read json contents", 0.7);
+                    self.update_item_progress(&json_file.name, "read json contents", 0.7);
                     let file_content = fs::read_to_string(&json_file.path).await?;
-                    self.update_item_progress(&media_file.name, "convert to raw json", 0.8);
+                    self.update_item_progress(&json_file.name, "convert to raw json", 0.8);
                     let raw_json: Value = serde_json::from_str(&file_content)?;
-                    self.update_item_progress(&media_file.name, "create media file in db", 0.9);
-                    let _ = create_media_file(&media_file.name, &media_file.path, &raw_json).await?;
-                    self.update_item_progress(&media_file.name, "created media file in db", 1.0);
+                    self.update_item_progress(&json_file.name, "create media file in db", 0.9);
+                    let _ = create_media_file(&json_file.name, &media_file.path, &raw_json).await?;
+                    self.update_item_progress(&json_file.name, "created media file in db", 1.0);
                 }
                 MEDIA_STATUS_FAILED => {
                     let mut json_file = json_file.into_active_model();
                     json_file.status = Set(format!("{}: media file already failed", MEDIA_STATUS_FAILED));
-                    update_file_in_zip(json_file).await?;
+                    let json_file = update_file_in_zip(json_file).await?;
+                    self.update_item_progress(&json_file.name, "created media file in db", 1.0);
                 }
                 _ => {}
             }

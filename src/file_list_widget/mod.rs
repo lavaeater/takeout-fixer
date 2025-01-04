@@ -46,6 +46,7 @@ pub struct FileListState {
     processing: bool,
     max_task_counts: HashMap<Task, u8>,
     task_counts: HashMap<Task, u8>,
+    progress_count: u16,
     progress_hash: HashMap<String, (String, f64)>,
     pub max_downloaded_zip_files: i32,
 }
@@ -62,6 +63,7 @@ impl Default for FileListState {
             processing: false,
             task_counts: HashMap::new(),
             max_task_counts: HashMap::new(),
+            progress_count: 0,
             progress_hash: HashMap::new(),
             max_downloaded_zip_files: 10,
         }
@@ -202,6 +204,11 @@ impl FileListWidget {
             state
                 .progress_hash
                 .insert(item.to_string(), (task.to_string(), progress));
+            if let Some((t, p)) = state.progress_hash.get(item) {
+                if p >= &1.0 {
+                    state.progress_hash.remove(item);
+                }
+            }
         }
     }
 

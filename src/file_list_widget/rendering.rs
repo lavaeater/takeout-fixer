@@ -26,7 +26,11 @@ impl Widget for &mut FileListWidget {
             }
         }
         let mut state = self.get_write_state();
-        state.progress_hash.clear();
+        state.progress_count += 1;
+        if state.progress_count > 1000 {
+            state.progress_count = 0;
+            state.progress_hash.clear();
+        }
     }
 }
 
