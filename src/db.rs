@@ -1,4 +1,6 @@
+use std::ops::Deref;
 use std::path::Path;
+use std::time::Duration;
 use crate::file_list_widget::DriveItem;
 use anyhow::Error;
 use anyhow::Result;
@@ -20,6 +22,17 @@ pub fn get_db_url() -> String {
 
 async fn get_db_connection() -> Result<DatabaseConnection> {
     let db_url = get_db_url();
+    // Check this out in the future for sqlite support.
+    // let mut connect_options = sea_orm::ConnectOptions::new(db_url);
+    //     connect_options.min_connections(2)
+    //     .max_connections(10)
+    //     .connect_timeout(Duration::from_secs(1))
+    //     .acquire_timeout(Duration::from_secs(1))
+    //     .idle_timeout(Duration::from_secs(1))
+    //     .max_lifetime(Duration::from_secs(1))
+    //     .sqlx_logging(true)
+    //     .sqlx_logging_level(log::LevelFilter::Info);
+    
     match sea_orm::Database::connect(&db_url).await {
         Ok(db_conn) => Ok(db_conn),
         Err(e) => Err(Error::new(e)),
@@ -180,6 +193,11 @@ pub async fn fetch_new_media_and_set_status_to_processing() -> Result<Option<fil
 
 pub async fn fetch_new_json_and_set_status_to_processing() -> Result<Option<file_in_zip::Model>> {
     fetch_media_file_to_process(MEDIA_STATUS_NEW, "json", Some(MEDIA_STATUS_PROCESSING)).await
+}
+
+pub async fn fetch_file_in_zip_by_id(id: i32) -> Result<Option<file_in_zip::Model>> {
+    let conn = get_db_connection().await?;
+    Ok(file_in_zip::Entity::find_by_id(id).one(&conn).await?)
 }
 
 pub async fn fetch_media_file_to_process(

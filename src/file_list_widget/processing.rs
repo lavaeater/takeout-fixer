@@ -1,4 +1,4 @@
-use crate::db::{create_file_in_zip, create_media_file, fetch_json_if_exists, fetch_media_file_if_exists, fetch_new_json_and_set_status_to_processing, fetch_new_media_and_set_status_to_processing, fetch_next_takeout, store_file, update_file_in_zip, update_takeout_zip, MEDIA_STATUS_FAILED, MEDIA_STATUS_NEW, MEDIA_STATUS_NO_DATE, MEDIA_STATUS_NO_MEDIA, MEDIA_STATUS_PROCESSED};
+use crate::db::{create_file_in_zip, create_media_file, fetch_file_in_zip_by_id, fetch_json_if_exists, fetch_media_file_if_exists, fetch_new_json_and_set_status_to_processing, fetch_new_media_and_set_status_to_processing, fetch_next_takeout, store_file, update_file_in_zip, update_takeout_zip, MEDIA_STATUS_FAILED, MEDIA_STATUS_NEW, MEDIA_STATUS_NO_DATE, MEDIA_STATUS_NO_MEDIA, MEDIA_STATUS_PROCESSED, MEDIA_STATUS_PROCESSING};
 use crate::drive::{download, get_file_path, get_target_folder};
 use crate::file_list_widget::{DriveItem, FileListWidget, LoadingState, PhotoMetadata, Task};
 use crate::media_utils::rexif_get_taken_date;
@@ -156,6 +156,15 @@ impl FileListWidget {
                         let later = this.clone();
                         match this.process_json_file(item.clone()).await {
                             Ok(_) => {
+                                let item = fetch_file_in_zip_by_id(item.id).await.unwrap().unwrap();
+                                match item.status.as_str() {
+                                    MEDIA_STATUS_PROCESSING => {
+                                        let mut item = item.into_active_model();
+                                        item.status = Set(MEDIA_STATUS_PROCESSED.to_owned());
+                                        update_file_in_zip(item).await.unwrap();
+                                    }
+                                    _ => {}
+                                }
                                 later.stop_task(Task::JsonProcessing);
                             }
                             Err(err) => {
@@ -203,6 +212,15 @@ impl FileListWidget {
                     media_file.status = Set(MEDIA_STATUS_NEW.to_owned());
                     self.update_item_progress(&json_file.name, "set media to new", 0.35);
                     update_file_in_zip(media_file).await?;
+                }
+                MEDIA_STATUS_PROCESSING => {
+                    self.update_item_progress(&json_file.name, "associate media with json", 0.3);
+                    if media_file.related_id.is_none() {
+                        let (_media_file, _json_file) = self.associate_media_with_json(&media_file, &json_file).await?;
+                    }
+                    let mut json_file = json_file.into_active_model();
+                    json_file.status = Set(MEDIA_STATUS_NEW.to_owned());
+                    let _json_file = update_file_in_zip(json_file).await?;
                 }
                 MEDIA_STATUS_PROCESSED => {
                     self.update_item_progress(&json_file.name, "media processed", 0.4);

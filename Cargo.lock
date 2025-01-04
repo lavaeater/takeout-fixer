@@ -3922,6 +3922,7 @@ dependencies = [
  "entity",
  "futures",
  "google-drive",
+ "log",
  "migration",
  "nom-exif",
  "oauth2",
