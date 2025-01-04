@@ -1,19 +1,19 @@
 mod app;
 mod event;
-mod handler;
 mod tui;
 pub(crate) mod drive;
-mod widgets;
 mod ui;
-mod db;
+pub(crate) mod db;
+mod media_utils;
+mod file_list_widget;
 
 use std::io;
+use crate::app::{App, AppResult};
 use dotenv::dotenv;
 use ratatui::prelude::CrosstermBackend;
 use ratatui::Terminal;
-use crate::app::{App, AppResult};
 use crate::event::{Event, EventHandler};
-use crate::handler::handle_key_events;
+use file_list_widget::ui_actions::handle_key_events;
 use crate::tui::Tui;
 
 #[tokio::main]
@@ -48,8 +48,4 @@ async fn main() -> AppResult<()> {
     tui.exit()?;
     Ok(())
 }
-
-/*
-{"state"=>"f19ea489-ea80-460a-905e-f4259227cc13", "code"=>"4/0AanRRrsbNdQnzqNqBYiluRBGkY6OiIbutw1goIG7VgS23ypELRuvS_ztJCNvaGLx1R3gBA", "scope"=>"https://www.googleapis.com/auth/drive", "controller"=>"supervisor/crm_integration", "action"=>"drive"}
- */
 

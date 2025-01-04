@@ -1,4 +1,4 @@
-use crate::widgets::DriveItem;
+use crate::file_list_widget::DriveItem;
 use anyhow::Result;
 use google_drive::types::File;
 use google_drive::{Client, RootDefaultServer};
