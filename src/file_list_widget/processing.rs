@@ -53,7 +53,7 @@ impl FileListWidget {
 
     async fn start_processing_pipeline(self) {
         self.set_loading_state(LoadingState::Processing);
-        let mut interval = tokio::time::interval(Duration::from_millis(100)); // Poll every 3 seconds
+        let mut interval = tokio::time::interval(Duration::from_millis(10)); // Poll every 3 seconds
 
         while self.is_processing() {
             interval.tick().await; // Wait before each poll

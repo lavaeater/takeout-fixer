@@ -1,6 +1,4 @@
-use std::ops::Deref;
 use std::path::Path;
-use std::time::Duration;
 use crate::file_list_widget::DriveItem;
 use anyhow::Error;
 use anyhow::Result;
