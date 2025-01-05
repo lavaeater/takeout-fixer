@@ -1,4 +1,4 @@
-use crate::db::{create_file_in_zip, create_media_file, fetch_media_file_if_exists, fetch_media_file_to_process, fetch_next_takeout, fetch_related, store_file, update_file_in_zip, update_takeout_zip, MEDIA_STATUS_FAILED, MEDIA_STATUS_HAS_RELATED, MEDIA_STATUS_NO_DATE, MEDIA_STATUS_NO_RELATED, MEDIA_STATUS_PROCESSED, MEDIA_STATUS_PROCESSING};
+use crate::db::{create_file_in_zip, create_media_file, fetch_media_file_if_exists, fetch_media_file_to_process, fetch_next_takeout, fetch_related, store_file, update_file_in_zip, update_takeout_zip, MEDIA_STATUS_FAILED, MEDIA_STATUS_HAS_RELATED, MEDIA_STATUS_NO_DATE, MEDIA_STATUS_NO_RELATED, MEDIA_STATUS_PROCESSED, MEDIA_STATUS_PROCESSING, ZIP_STATUS_DOWNLOADED, ZIP_STATUS_DOWNLOADING, ZIP_STATUS_FAILED, ZIP_STATUS_NEW, ZIP_STATUS_PROCESSED, ZIP_STATUS_PROCESSING};
 use crate::drive::{download, get_file_path, get_target_folder};
 use crate::file_list_widget::{DriveItem, FileListWidget, LoadingState, PhotoMetadata, Task};
 use anyhow::Result;
@@ -60,8 +60,8 @@ impl FileListWidget {
             // Check for "new" items to download
             if self.start_task(Task::Download) {
                 if let Ok(Some(mut item)) = fetch_next_takeout(
-                    "new",
-                    Some("downloading"),
+                    ZIP_STATUS_NEW,
+                    Some(ZIP_STATUS_DOWNLOADING),
                     Some(self.get_max_number_of_downloaded()),
                 )
                 .await
@@ -79,12 +79,12 @@ impl FileListWidget {
                             .await
                         {
                             Ok(path) => {
-                                item.status = Set("downloaded".to_string());
+                                item.status = Set(ZIP_STATUS_DOWNLOADED.to_string());
                                 item.local_path = Set(path.clone());
                                 later.stop_task(Task::Download);
                             }
                             Err(_) => {
-                                item.status = Set("download_failed".to_string());
+                                item.status = Set(ZIP_STATUS_FAILED.to_string());
                                 later.stop_task(Task::Download);
                             }
                         }
@@ -98,7 +98,7 @@ impl FileListWidget {
             // Check for "downloaded" items
             if self.start_task(Task::Examination) {
                 if let Ok(Some(mut item)) =
-                    fetch_next_takeout("downloaded", Some("processing_zip"), None).await
+                    fetch_next_takeout(ZIP_STATUS_DOWNLOADED, Some(ZIP_STATUS_PROCESSING), None).await
                 {
                     let this = self.clone();
 
@@ -109,11 +109,11 @@ impl FileListWidget {
                             .await
                         {
                             Ok(_) => {
-                                item.status = Set("processed_zip".to_string());
+                                item.status = Set(ZIP_STATUS_PROCESSED.to_string());
                                 later.stop_task(Task::Examination);
                             }
                             Err(err) => {
-                                item.status = Set(format!("{} - processing_failed", err));
+                                item.status = Set(format!("{}: {}", ZIP_STATUS_FAILED, err));
                                 later.stop_task(Task::Examination);
                             }
                         }

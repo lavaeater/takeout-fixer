@@ -44,8 +44,6 @@ pub struct FileListState {
     table_state: TableState,
     current_folder: Option<DriveItem>,
     processing: bool,
-    max_total_tasks: u8,
-    total_task_count: u8,
     max_task_counts: HashMap<Task, u8>,
     task_counts: HashMap<Task, u8>,
     progress_count: u16,
@@ -63,8 +61,6 @@ impl Default for FileListState {
             table_state: TableState::default(),
             current_folder: None,
             processing: false,
-            max_total_tasks: 10,
-            total_task_count: 0,
             task_counts: HashMap::new(),
             max_task_counts: HashMap::new(),
             progress_count: 0,
@@ -239,36 +235,19 @@ impl FileListWidget {
     pub fn is_processing(&self) -> bool {
         self.get_read_state().processing
     }
-    
-    pub fn get_max_for_task(&self, task: &Task) -> u8 {
-        *self.get_read_state().max_task_counts.get(task).unwrap_or(&1)
-    }
-    
-    pub fn get_current_count_for_task(&self, task: &Task) -> u8 {
-        *self.get_read_state().task_counts.get(task).unwrap_or(&0)
-    }
-    
-    pub fn can_start_new_task(&self) -> bool {
-        let state = self.get_read_state();
-        state.total_task_count < state.max_total_tasks
-    }
 
     pub fn start_task(&self, task: Task) -> bool {
         let mut state = self.get_write_state();
         let mut did_start = false;
-        
-        let max = self.get_max_for_task(&task);
+
+        let max = *state.max_task_counts.get(&task).unwrap_or(&1);
 
         state.task_counts.entry(task).and_modify(|current| {
-            if self.can_start_new_task() && *current < max {
+            if *current < max {
                 did_start = true;
                 *current += 1;
             }
         });
-        
-        if did_start {
-            state.total_task_count += 1;
-        }
         did_start
     }
 
@@ -281,9 +260,6 @@ impl FileListWidget {
                 *current -= 1;
             }
         });
-        if did_stop && state.total_task_count > 0 {
-            state.total_task_count -= 1;
-        }
         did_stop
     }
 }

@@ -17,6 +17,13 @@ pub const MEDIA_STATUS_FAILED: &str = "failed";
 pub const MEDIA_STATUS_NO_DATE: &str = "no_date";
 pub const MEDIA_STATUS_HAS_RELATED: &str = "has_related";
 
+pub const ZIP_STATUS_NEW: &str = "new";
+pub const ZIP_STATUS_PROCESSING: &str = "processing";
+pub const ZIP_STATUS_PROCESSED: &str = "processed";
+pub const ZIP_STATUS_FAILED: &str = "failed";
+pub const ZIP_STATUS_DOWNLOADING: &str = "downloading";
+pub const ZIP_STATUS_DOWNLOADED: &str = "downloaded";
+
 pub fn get_db_url() -> String {
     dotenv::var("DATABASE_URL").unwrap_or("sqlite::memory:".to_string())
 }
@@ -142,7 +149,7 @@ pub fn get_model(file: DriveItem) -> Result<takeout_zip::ActiveModel> {
             id: Default::default(),
             drive_id: Set(id),
             name: Set(name),
-            status: Set(MEDIA_STATUS_NO_RELATED.to_string()),
+            status: Set(ZIP_STATUS_NEW.to_string()),
             local_path: Set("".to_string()),
         })
     } else {
