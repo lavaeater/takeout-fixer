@@ -3,6 +3,7 @@ use chrono::{DateTime, Utc};
 use nom_exif::{ExifIter, ExifTag, MediaParser, MediaSource, TrackInfo, TrackInfoTag};
 use std::path::Path;
 
+#[allow(dead_code)]
 pub async fn rexif_get_taken_date<P: AsRef<Path>>(path: P) -> Result<Option<DateTime<Utc>>> {
     if path.as_ref().is_file() {
         if path.as_ref().extension().unwrap() == "png" {
