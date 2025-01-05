@@ -1,13 +1,6 @@
-use crate::db::{
-    create_file_in_zip, create_media_file, fetch_file_in_zip_by_id,
-    fetch_json_without_media_and_set_status_to_processing, fetch_media_file_if_exists,
-    fetch_new_media_and_set_status_to_processing, fetch_next_takeout, fetch_related, store_file,
-    update_file_in_zip, update_takeout_zip, MEDIA_STATUS_FAILED, MEDIA_STATUS_NO_DATE,
-    MEDIA_STATUS_NO_RELATED, MEDIA_STATUS_PROCESSED, MEDIA_STATUS_PROCESSING,
-};
+use crate::db::{create_file_in_zip, create_media_file, fetch_media_file_if_exists, fetch_media_file_to_process, fetch_next_takeout, fetch_related, store_file, update_file_in_zip, update_takeout_zip, MEDIA_STATUS_FAILED, MEDIA_STATUS_HAS_RELATED, MEDIA_STATUS_NO_DATE, MEDIA_STATUS_NO_RELATED, MEDIA_STATUS_PROCESSED, MEDIA_STATUS_PROCESSING};
 use crate::drive::{download, get_file_path, get_target_folder};
 use crate::file_list_widget::{DriveItem, FileListWidget, LoadingState, PhotoMetadata, Task};
-use crate::media_utils::rexif_get_taken_date;
 use anyhow::Result;
 use async_compression::tokio::bufread::GzipDecoder;
 use chrono::{DateTime, Datelike, Utc};
@@ -132,7 +125,11 @@ impl FileListWidget {
             }
 
             if self.start_task(Task::MediaProcessing) {
-                if let Ok(Some(item)) = fetch_new_media_and_set_status_to_processing().await {
+                if let Ok(Some(item)) = fetch_media_file_to_process(
+                    MEDIA_STATUS_HAS_RELATED,
+                    "media",
+                    Some(MEDIA_STATUS_PROCESSING),
+                ).await {
                     let this = self.clone();
 
                     tokio::spawn(async move {
@@ -154,40 +151,40 @@ impl FileListWidget {
                 }
             }
 
-            if self.start_task(Task::JsonProcessing) {
-                if let Ok(Some(item)) =
-                    fetch_json_without_media_and_set_status_to_processing().await
-                {
-                    let this = self.clone();
-
-                    tokio::spawn(async move {
-                        let later = this.clone();
-                        match this.process_json_file(item.clone()).await {
-                            Ok(_) => {
-                                let item = fetch_file_in_zip_by_id(item.id).await.unwrap().unwrap();
-                                if item.status.as_str() == MEDIA_STATUS_PROCESSING {
-                                    let mut item = item.into_active_model();
-                                    item.status = Set(MEDIA_STATUS_PROCESSED.to_owned());
-                                    update_file_in_zip(item).await.unwrap();
-                                }
-                                later.stop_task(Task::JsonProcessing);
-                            }
-                            Err(err) => {
-                                let mut item = item.into_active_model();
-                                item.status = Set(format!("{}: {}", MEDIA_STATUS_FAILED, err));
-                                update_file_in_zip(item).await.unwrap();
-                                later.stop_task(Task::JsonProcessing);
-                            }
-                        }
-                    });
-                } else {
-                    self.stop_task(Task::JsonProcessing);
-                }
-            }
+            // if self.start_task(Task::JsonProcessing) {
+            //     if let Ok(Some(item)) =
+            //         fetch_json_without_media_and_set_status_to_processing().await
+            //     {
+            //         let this = self.clone();
+            // 
+            //         tokio::spawn(async move {
+            //             let later = this.clone();
+            //             match this.process_json_file(item.clone()).await {
+            //                 Ok(_) => {
+            //                     let item = fetch_file_in_zip_by_id(item.id).await.unwrap().unwrap();
+            //                     if item.status.as_str() == MEDIA_STATUS_PROCESSING {
+            //                         let mut item = item.into_active_model();
+            //                         item.status = Set(MEDIA_STATUS_PROCESSED.to_owned());
+            //                         update_file_in_zip(item).await.unwrap();
+            //                     }
+            //                     later.stop_task(Task::JsonProcessing);
+            //                 }
+            //                 Err(err) => {
+            //                     let mut item = item.into_active_model();
+            //                     item.status = Set(format!("{}: {}", MEDIA_STATUS_FAILED, err));
+            //                     update_file_in_zip(item).await.unwrap();
+            //                     later.stop_task(Task::JsonProcessing);
+            //                 }
+            //             }
+            //         });
+            //     } else {
+            //         self.stop_task(Task::JsonProcessing);
+            //     }
+            // }
         }
     }
 
-    pub fn process_file(&self) {
+    pub fn open_drive_file(&self) {
         if let Ok(state) = self.state.read() {
             if let Some(selected) = state.table_state.selected() {
                 let file = &state.files[selected];
@@ -201,6 +198,7 @@ impl FileListWidget {
         }
     }
 
+    #[allow(dead_code)]
     async fn process_json_file(self, json_file: FileInZipModel) -> Result<()> {
         self.update_item_progress(&json_file.name, "start processing", 0.1);
         let media_file = fetch_media_file_if_exists(&json_file).await?;

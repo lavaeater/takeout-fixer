@@ -148,7 +148,7 @@ impl FileListWidget {
                 self.scroll_up();
             }
             UiActions::SelectItem => {
-                self.process_file();
+                self.open_drive_file();
             }
             UiActions::SwitchView => match view_state {
                 FileListWidgetViewState::Files => {

@@ -224,6 +224,7 @@ pub async fn fetch_related(media_file: &file_in_zip::Model) -> Result<Option<fil
     }
 }
 
+#[allow(dead_code)]
 pub async fn fetch_new_media_and_set_status_to_processing() -> Result<Option<file_in_zip::Model>> {
     fetch_media_file_to_process(
         MEDIA_STATUS_HAS_RELATED,
@@ -233,6 +234,7 @@ pub async fn fetch_new_media_and_set_status_to_processing() -> Result<Option<fil
     .await
 }
 
+#[allow(dead_code)]
 pub async fn fetch_json_without_media_and_set_status_to_processing(
 ) -> Result<Option<file_in_zip::Model>> {
     fetch_media_file_to_process(
@@ -243,6 +245,7 @@ pub async fn fetch_json_without_media_and_set_status_to_processing(
     .await
 }
 
+#[allow(dead_code)]
 pub async fn fetch_file_in_zip_by_id(id: i32) -> Result<Option<file_in_zip::Model>> {
     let conn = get_db_connection().await?;
     Ok(file_in_zip::Entity::find_by_id(id).one(&conn).await?)
