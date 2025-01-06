@@ -40,7 +40,7 @@ impl FileListWidget {
         state.max_task_counts.insert(Task::Download, 5);
         state.max_task_counts.insert(Task::Examination, 5);
         state.max_task_counts.insert(Task::RemoveProcessed, 2);
-        state.max_task_counts.insert(Task::MediaProcessing, 2);
+        state.max_task_counts.insert(Task::MediaProcessing, 20);
         state.max_task_counts.insert(Task::JsonProcessing, 2);
 
         state.task_counts.insert(Task::Download, 0);
