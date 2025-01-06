@@ -33,6 +33,7 @@ pub enum Task {
     Examination,
     MediaProcessing,
     JsonProcessing,
+    RemoveProcessed,
 }
 
 #[derive(Debug)]

@@ -20,7 +20,10 @@ pub const MEDIA_STATUS_HAS_RELATED: &str = "has_related";
 pub const ZIP_STATUS_NEW: &str = "new";
 pub const ZIP_STATUS_PROCESSING: &str = "processing";
 pub const ZIP_STATUS_PROCESSED: &str = "processed";
+pub const ZIP_STATUS_REMOVING: &str = "removing";
+pub const ZIP_STATUS_REMOVED: &str = "removed";
 pub const ZIP_STATUS_FAILED: &str = "failed";
+pub const ZIP_STATUS_EXAMINE_FAILED: &str = "examine_failed";
 pub const ZIP_STATUS_DOWNLOADING: &str = "downloading";
 pub const ZIP_STATUS_DOWNLOADED: &str = "downloaded";
 
@@ -59,7 +62,7 @@ pub async fn check_number_of_takeouts_with_status(status: &str, n: i32) -> Resul
 pub async fn fetch_next_takeout(
     status: &str,
     new_status: Option<&str>,
-    max_with_new_status: Option<i32>,
+    max_with_next_status: Option<(i32, &str)>,
 ) -> Result<Option<TakeoutZipActiveModel>> {
     let db = get_db_connection().await?;
     let model = takeout_zip::Entity::find()
@@ -71,8 +74,8 @@ pub async fn fetch_next_takeout(
         Some(model) => match new_status {
             None => Ok(Some(model.into_active_model())),
             Some(new_status) => {
-                if let Some(n) = max_with_new_status {
-                    if check_number_of_takeouts_with_status(new_status, n).await? {
+                if let Some((max_allowed, next_status)) = max_with_next_status {
+                    if check_number_of_takeouts_with_status(next_status, max_allowed).await? {
                         let mut model = model.into_active_model();
                         model.status = Set(new_status.to_string());
                         Ok(Some(model.update(&db).await?.into_active_model()))

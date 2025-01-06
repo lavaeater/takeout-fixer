@@ -1,4 +1,4 @@
-use crate::db::{create_file_in_zip, create_media_file, fetch_media_file_if_exists, fetch_media_file_to_process, fetch_next_takeout, fetch_related, store_file, update_file_in_zip, update_takeout_zip, MEDIA_STATUS_FAILED, MEDIA_STATUS_HAS_RELATED, MEDIA_STATUS_NO_DATE, MEDIA_STATUS_NO_RELATED, MEDIA_STATUS_PROCESSED, MEDIA_STATUS_PROCESSING, ZIP_STATUS_DOWNLOADED, ZIP_STATUS_DOWNLOADING, ZIP_STATUS_FAILED, ZIP_STATUS_NEW, ZIP_STATUS_PROCESSED, ZIP_STATUS_PROCESSING};
+use crate::db::{create_file_in_zip, create_media_file, fetch_media_file_if_exists, fetch_media_file_to_process, fetch_next_takeout, fetch_related, store_file, update_file_in_zip, update_takeout_zip, MEDIA_STATUS_FAILED, MEDIA_STATUS_HAS_RELATED, MEDIA_STATUS_NO_DATE, MEDIA_STATUS_NO_RELATED, MEDIA_STATUS_PROCESSED, MEDIA_STATUS_PROCESSING, ZIP_STATUS_DOWNLOADED, ZIP_STATUS_DOWNLOADING, ZIP_STATUS_EXAMINE_FAILED, ZIP_STATUS_FAILED, ZIP_STATUS_NEW, ZIP_STATUS_PROCESSED, ZIP_STATUS_PROCESSING, ZIP_STATUS_REMOVED, ZIP_STATUS_REMOVING};
 use crate::drive::{download, get_file_path, get_target_folder};
 use crate::file_list_widget::{DriveItem, FileListWidget, LoadingState, PhotoMetadata, Task};
 use anyhow::Result;
@@ -17,7 +17,7 @@ use tokio::fs::File as TokioFile;
 use tokio::io::{AsyncWriteExt, BufReader};
 use tokio_tar::{Archive, EntryType};
 
-pub const REMOVE_ZIPS_AFTER_PROCESSING: bool = true;
+pub const REMOVE_ZIPS_AFTER_PROCESSING: bool = false;
 
 impl FileListWidget {
     pub(crate) async fn store_files_in_db(self, files: Vec<DriveItem>) {
@@ -37,13 +37,15 @@ impl FileListWidget {
     pub fn start_processing(&self) {
         let mut state = self.get_write_state();
         state.processing = true;
-        state.max_task_counts.insert(Task::Download, 3);
-        state.max_task_counts.insert(Task::Examination, 3);
-        state.max_task_counts.insert(Task::MediaProcessing, 3);
-        state.max_task_counts.insert(Task::JsonProcessing, 3);
+        state.max_task_counts.insert(Task::Download, 5);
+        state.max_task_counts.insert(Task::Examination, 5);
+        state.max_task_counts.insert(Task::RemoveProcessed, 2);
+        state.max_task_counts.insert(Task::MediaProcessing, 2);
+        state.max_task_counts.insert(Task::JsonProcessing, 2);
 
         state.task_counts.insert(Task::Download, 0);
         state.task_counts.insert(Task::Examination, 0);
+        state.task_counts.insert(Task::RemoveProcessed, 0);
         state.task_counts.insert(Task::MediaProcessing, 0);
         state.task_counts.insert(Task::JsonProcessing, 0);
         let this = self.clone();
@@ -52,17 +54,41 @@ impl FileListWidget {
 
     async fn start_processing_pipeline(self) {
         self.set_loading_state(LoadingState::Processing);
-        let mut interval = tokio::time::interval(Duration::from_millis(1)); // Poll every 3 seconds
+        let mut interval = tokio::time::interval(Duration::from_millis(10)); // Poll every 3 seconds
 
         while self.is_processing() {
             interval.tick().await; // Wait before each poll
+
+            if self.start_task(Task::RemoveProcessed) {
+                if let Ok(Some(mut item)) =
+                    fetch_next_takeout(ZIP_STATUS_PROCESSED, Some(ZIP_STATUS_REMOVING), None).await
+                {
+                    let this = self.clone();
+
+                    tokio::spawn(async move {
+                        match tokio::fs::remove_file(&item.local_path.clone().unwrap()).await {
+                            Ok(_) => {
+                                item.status = Set(ZIP_STATUS_REMOVED.to_string());
+                                this.stop_task(Task::RemoveProcessed);
+                            }
+                            Err(err) => {
+                                item.status = Set(format!("{}: {}", ZIP_STATUS_FAILED, err));
+                                this.stop_task(Task::RemoveProcessed);
+                            }
+                        }
+                        update_takeout_zip(item).await.unwrap();
+                    });
+                } else {
+                    self.stop_task(Task::RemoveProcessed);
+                }
+            }
 
             // Check for "new" items to download
             if self.start_task(Task::Download) {
                 if let Ok(Some(mut item)) = fetch_next_takeout(
                     ZIP_STATUS_NEW,
                     Some(ZIP_STATUS_DOWNLOADING),
-                    Some(self.get_max_number_of_downloaded()),
+                    Some((self.get_max_number_of_downloaded(), ZIP_STATUS_DOWNLOADED)),
                 )
                 .await
                 {
@@ -83,8 +109,9 @@ impl FileListWidget {
                                 item.local_path = Set(path.clone());
                                 later.stop_task(Task::Download);
                             }
-                            Err(_) => {
-                                item.status = Set(ZIP_STATUS_FAILED.to_string());
+                            Err(err) => {
+                                item.status =
+                                    Set(format!("{}: {}", ZIP_STATUS_FAILED.to_string(), err));
                                 later.stop_task(Task::Download);
                             }
                         }
@@ -98,7 +125,8 @@ impl FileListWidget {
             // Check for "downloaded" items
             if self.start_task(Task::Examination) {
                 if let Ok(Some(mut item)) =
-                    fetch_next_takeout(ZIP_STATUS_DOWNLOADED, Some(ZIP_STATUS_PROCESSING), None).await
+                    fetch_next_takeout(ZIP_STATUS_DOWNLOADED, Some(ZIP_STATUS_PROCESSING), None)
+                        .await
                 {
                     let this = self.clone();
 
@@ -113,7 +141,7 @@ impl FileListWidget {
                                 later.stop_task(Task::Examination);
                             }
                             Err(err) => {
-                                item.status = Set(format!("{}: {}", ZIP_STATUS_FAILED, err));
+                                item.status = Set(format!("{}: {}", ZIP_STATUS_EXAMINE_FAILED, err));
                                 later.stop_task(Task::Examination);
                             }
                         }
@@ -129,7 +157,9 @@ impl FileListWidget {
                     MEDIA_STATUS_HAS_RELATED,
                     "media",
                     Some(MEDIA_STATUS_PROCESSING),
-                ).await {
+                )
+                .await
+                {
                     let this = self.clone();
 
                     tokio::spawn(async move {
@@ -156,7 +186,7 @@ impl FileListWidget {
             //         fetch_json_without_media_and_set_status_to_processing().await
             //     {
             //         let this = self.clone();
-            // 
+            //
             //         tokio::spawn(async move {
             //             let later = this.clone();
             //             match this.process_json_file(item.clone()).await {
