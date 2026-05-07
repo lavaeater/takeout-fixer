@@ -16,11 +16,11 @@ pub async fn rexif_get_taken_date<P: AsRef<Path>>(path: P) -> Result<Option<Date
             iter.into_iter()
             .find(|x| x.tag_code() == ExifTag::CreateDate.code())
                 .and_then(|mut x| x.take_value()
-                    .and_then(|v| v.as_time().map(|t| t.to_utc())))
+                    .and_then(|v| v.as_time_components().map(|(t,_)| t.and_utc())))
         } else {
             let info: TrackInfo = parser.parse(ms)?;
             info.get(TrackInfoTag::CreateDate)
-                .and_then(|v| v.as_time().map(|t| t.to_utc()))
+                .and_then(|v| v.as_time_components().map(|(t,_)| t.and_utc()))
         };
         Ok(r)
     } else {

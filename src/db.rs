@@ -191,16 +191,16 @@ pub async fn fetch_media_file_if_exists(
     json_file: &file_in_zip::Model,
 ) -> Result<Option<file_in_zip::Model>> {
     let conn = get_db_connection().await?;
-    let model = if json_file.related_id.is_none() {
-        file_in_zip::Entity::find()
-            .filter(file_in_zip::Column::PathNoExt.eq(&json_file.path_no_ext))
-            .filter(file_in_zip::Column::FileType.eq("media"))
-            .one(&conn)
-            .await?
+    let model = if let Some(related_id) = json_file.related_id {
+      file_in_zip::Entity::find_by_id(related_id)
+        .one(&conn)
+        .await?
     } else {
-        file_in_zip::Entity::find_by_id(json_file.related_id.unwrap())
-            .one(&conn)
-            .await?
+      file_in_zip::Entity::find()
+        .filter(file_in_zip::Column::PathNoExt.eq(&json_file.path_no_ext))
+        .filter(file_in_zip::Column::FileType.eq("media"))
+        .one(&conn)
+        .await?
     };
     Ok(model)
 }
@@ -223,14 +223,14 @@ pub async fn fetch_associated_if_exists(
 
 pub async fn fetch_related(media_file: &file_in_zip::Model) -> Result<Option<file_in_zip::Model>> {
     let conn = get_db_connection().await?;
-    if media_file.related_id.is_none() {
-        Ok(None)
+    if let Some(related_id) =  media_file.related_id {
+      Ok(
+        file_in_zip::Entity::find_by_id(related_id)
+          .one(&conn)
+          .await?,
+      )
     } else {
-        Ok(
-            file_in_zip::Entity::find_by_id(media_file.related_id.unwrap())
-                .one(&conn)
-                .await?,
-        )
+      Ok(None)
     }
 }
 
