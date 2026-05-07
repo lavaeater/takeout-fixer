@@ -111,7 +111,7 @@ impl FileListWidget {
                             }
                             Err(err) => {
                                 item.status =
-                                    Set(format!("{}: {}", ZIP_STATUS_FAILED.to_string(), err));
+                                    Set(format!("{}: {}", ZIP_STATUS_FAILED, err));
                                 later.stop_task(Task::Download);
                             }
                         }
@@ -215,8 +215,8 @@ impl FileListWidget {
     }
 
     pub fn open_drive_file(&self) {
-        if let Ok(state) = self.state.read() {
-            if let Some(selected) = state.table_state.selected() {
+        if let Ok(state) = self.state.read()
+            && let Some(selected) = state.table_state.selected() {
                 let file = &state.files[selected];
                 match file {
                     DriveItem::File(_, _) => {}
@@ -225,7 +225,6 @@ impl FileListWidget {
                     }
                 }
             }
-        }
     }
 
     #[allow(dead_code)]

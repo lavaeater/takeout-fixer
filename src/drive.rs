@@ -133,11 +133,10 @@ pub async fn login_google() -> anyhow::Result<Tokens> {
 
 async fn ensure_tokens() -> Result<Tokens> {
     if let Ok(tokens) = load_tokens().await {
-        if let Some(expires_at) = tokens.expires_at {
-            if expires_at > chrono::Utc::now().timestamp() as u64 {
+        if let Some(expires_at) = tokens.expires_at
+            && expires_at > chrono::Utc::now().timestamp() as u64 {
                 return Ok(tokens);
-            }
-        } 
+            } 
              match refresh_access_token(&tokens.refresh_token).await {
                 Ok(new_tokens) => Ok(new_tokens),
                 Err(_) => login_google().await,

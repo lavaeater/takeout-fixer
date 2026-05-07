@@ -20,11 +20,10 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> AppResult<()> {
             app.file_list_widget.handle_action(UiActions::Quit);
         }
         // Exit application on `Ctrl-C`
-        KeyCode::Char('c') | KeyCode::Char('C') => {
-            if key_event.modifiers == KeyModifiers::CONTROL {
+        KeyCode::Char('c') | KeyCode::Char('C')
+            if key_event.modifiers == KeyModifiers::CONTROL => {
                 app.file_list_widget.handle_action(UiActions::Quit);
             }
-        }
         KeyCode::Enter => {
             app.file_list_widget.handle_action(UiActions::SelectItem);
         }

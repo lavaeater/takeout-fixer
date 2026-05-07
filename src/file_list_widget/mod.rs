@@ -205,11 +205,10 @@ impl FileListWidget {
             state
                 .progress_hash
                 .insert(item.to_string(), (task.to_string(), progress));
-            if let Some((_t, p)) = state.progress_hash.get(item) {
-                if p >= &1.0 {
+            if let Some((_t, p)) = state.progress_hash.get(item)
+                && p >= &1.0 {
                     state.progress_hash.remove(item);
                 }
-            }
         }
     }
 
